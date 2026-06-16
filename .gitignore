@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Next.js / build output
+.next/
+out/
+build/
+dist/
+
+# Environment variables — keep secrets out of git!
+.env
+.env*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local agent tooling (installed skills live here — kept out of the repo)
+.agents/
+skills-lock.json
+
+# Personal files — kept on this computer only, never published
+claudecode_jumpstart.docx

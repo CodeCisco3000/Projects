@@ -29,3 +29,16 @@ skills-lock.json
 
 # Personal files — kept on this computer only, never published
 claudecode_jumpstart.docx
+
+# Resumes — contain personal contact info; never publish to the public repo
+*Resume*
+*resume*
+
+# Private folder — everything in here stays on this computer, never published
+Private Random Stuff/
+
+# Personal photo used on the resume — keep private
+headshot.*
+
+# Session handoff notes — local only, never published
+SESSION_TURNOVER.md

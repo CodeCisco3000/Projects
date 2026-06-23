@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Poster — Francisco Cardenas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Space+Mono&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --r-display: "Space Grotesk", system-ui, sans-serif;
+    --r-mono: "Space Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 70px 16px;
+    background: #161210 url("/textures/brick-color.jpg");
+    background-size: 540px;
+    font-family: var(--r-display);
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(130% 120% at 50% 40%, rgba(0,0,0,.18), rgba(0,0,0,.7));
+  }
+
+  /* ---- recovered poster (old globals.css, verbatim) ---- */
+  .hero {
+    position: relative; width: 270px; z-index: 1;
+    --sv-magenta: #ff2e88;
+    --sv-cyan: #18e0ff;
+    --sv-yellow: #ffe600;
+  }
+  /* warm spotlight spilling around the poster onto the brick */
+  .hero::before {
+    content: ""; position: absolute; inset: -80px -100px -110px -80px; z-index: -1;
+    pointer-events: none; filter: blur(12px);
+    background: radial-gradient(58% 52% at 48% 42%,
+      rgba(255, 196, 120, 0.26), rgba(255, 170, 90, 0.10) 46%, transparent 72%);
+  }
+  .poster {
+    position: relative;
+    display: flex; flex-direction: column; justify-content: space-between; min-height: 376px;
+    padding: 26px 19px 24px;
+    transform: rotate(-2.4deg);
+    background:
+      radial-gradient(circle 54px at 85% 12%,
+        rgba(0, 0, 0, 0.97) 0%, rgba(0, 0, 0, 0.65) 52%, transparent 78%),
+      radial-gradient(82% 80% at 85% 12%,
+        rgba(0, 0, 0, 0.04) 0%, rgba(0, 0, 0, 0.45) 18%,
+        rgba(0, 0, 0, 0.90) 38%, rgba(0, 0, 0, 1) 56%),
+      repeating-conic-gradient(from 195deg at 85% 12%,
+        rgba(0, 0, 0, 0) 0deg,
+        #2be9ff 4deg, #2be9ff 5.5deg,
+        rgba(0, 0, 0, 0) 10deg, rgba(0, 0, 0, 0) 15deg,
+        #ff1d8e 19deg, #ff1d8e 20.5deg,
+        rgba(0, 0, 0, 0) 25deg, rgba(0, 0, 0, 0) 30deg),
+      #000;
+    border: 2px solid rgba(255, 255, 255, 0.10);
+    border-radius: 3px;
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.06) inset,
+      0 22px 46px -14px rgba(0, 0, 0, 0.75),
+      0 6px 16px rgba(0, 0, 0, 0.55);
+  }
+  .poster::before {
+    content: ""; position: absolute; inset: 7px; pointer-events: none;
+    border: 1.5px solid rgba(24, 224, 255, 0.30); border-radius: 2px;
+  }
+  .poster__ey {
+    font-family: var(--r-mono); font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--sv-cyan); display: inline-flex; align-items: center; gap: 10px; padding-right: 84px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+  .poster__ey::before { content: ""; width: 22px; height: 2px; background: var(--sv-magenta); }
+  .poster__name {
+    font-family: var(--r-display); font-weight: 700; font-size: clamp(27px, 8.5vw, 32px);
+    line-height: 1.02; letter-spacing: -0.01em; text-transform: uppercase; color: #fff;
+  }
+  .poster__name .ln {
+    display: block; width: max-content;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  }
+  .poster__role {
+    font-size: 16px; line-height: 1.55; max-width: 30ch;
+    color: rgba(255, 255, 255, 0.88); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+  .poster__role b { color: var(--sv-cyan); font-weight: 700; }
+  .poster__meta {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    font-family: var(--r-mono); font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .poster__meta span {
+    padding: 5px 9px; border: 1.5px solid rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.82); background: rgba(0, 0, 0, 0.25);
+  }
+  .poster__meta span:first-child { border-color: var(--sv-magenta); color: #fff; }
+  .poster__spider {
+    position: absolute; top: 6px; right: 8px; width: 74px; height: auto; z-index: 2;
+    pointer-events: none; mix-blend-mode: screen; opacity: 1;
+    filter: contrast(1.2) saturate(1.08);
+  }
+  .tape {
+    position: absolute; z-index: 2; width: 44px; height: 14px;
+    background:
+      linear-gradient(rgba(255, 240, 210, 0.22), rgba(255, 255, 255, 0) 42%),
+      rgba(223, 168, 92, 0.55);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  .tape--tl { top: -7px; left: -11px; transform: rotate(-42deg); }
+  .tape--tr { top: -7px; right: -11px; transform: rotate(42deg); }
+  .tape--bl { bottom: -7px; left: -11px; transform: rotate(40deg); }
+  .tape--br { bottom: -7px; right: -11px; transform: rotate(-40deg); }
+
+  .note {
+    position: fixed; left: 0; right: 0; bottom: 14px; text-align: center;
+    font-family: var(--r-mono); font-size: 11px; letter-spacing: .08em; color: rgba(255,255,255,.5);
+  }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <div class="poster">
+      <span class="tape tape--tl" aria-hidden="true"></span>
+      <span class="tape tape--tr" aria-hidden="true"></span>
+      <span class="tape tape--bl" aria-hidden="true"></span>
+      <span class="tape tape--br" aria-hidden="true"></span>
+      <img class="poster__spider" src="/images/spider-logo.png" alt="" aria-hidden="true" />
+      <div class="poster__ey">Portfolio · The Room · 2026</div>
+      <h1 class="poster__name">
+        <span class="ln">Francisco</span>
+        <span class="ln">Cardenas</span>
+      </h1>
+      <p class="poster__role">
+        <b>Civil Engineering &amp; Construction Management</b> — building toward estimating &amp; project controls.
+      </p>
+      <div class="poster__meta">
+        <span>Expected May 2027</span>
+        <span>Open to internships &amp; co-ops</span>
+      </div>
+    </div>
+  </div>
+  <div class="note">Recovered original poster — open in any browser tab</div>
+</body>
+</html>

@@ -1,59 +1,31 @@
 "use client";
 
 /* =====================================================================
-   Portfolio.tsx — PHASE 1: the perspective room shell + camera.
+   Portfolio.tsx — the page shell around the 3D room (ADR-0010).
    ---------------------------------------------------------------------
-   A real CSS-3D corner of a room (walls + floor + ceiling under one
-   shared perspective). A fixed camera glides between named focus
-   anchors as you scroll — these anchors are PLACEHOLDERS standing in
-   for the objects (poster, desk, shelf…) that get furnished in later
-   phases. Content/labels still come from src/content/site.ts.
+   Owns the React state + the imperative engine refs and all DOM input
+   (scroll wheel / keyboard / focus rail), then drives the WebGL room
+   (RoomScene, mounted client-only) through shared refs. Everything that
+   needs to be crisp, accessible, and SEO-readable stays as HTML overlays
+   here — the top bar, focus rail, the click-to-read "inspect" card, and
+   the one-page résumé — all sourced from src/content/site.ts.
+
+   The CSS-3D room, poster, desk and window from Phases 1–3 were replaced
+   by the real-time 3D room; site.ts + the inspect card + résumé carried
+   over unchanged.
    ===================================================================== */
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { identity, stations, resumeOrder } from "@/content/site";
+import { STOPS } from "./roomStops";
 
-/* ---- the placeholder focus anchors, pinned onto the room's surfaces ----
-   `face`  = which surface the marker lives on
-   `x`/`y` = its position on that surface (CSS %)
-   `cam`   = where the camera glides to when this anchor is focused:
-             x/y/z  — px translate of the room
-             ry/rx  — small camera turn
-             rry    — the ROOM's base turn (deg). The real lever for facing a
-                      wall: turning the room brings a side wall forward so its
-                      objects read square-on instead of edge-on.
-             pox    — the perspective "eye" x-position (%), a finer framing nudge.
-   The six stops are arranged LEFT→RIGHT across the room so scrolling A→F
-   sweeps the camera smoothly across it with no backtracking:
-     about (A)            → left wall
-     education/experience/skills (B,C,D) → back wall, left→right
-     involvement/contact (E,F)           → right wall, back→front
-   rry — the ROOM's base turn. Back-wall and right-wall stops keep the resting
-   three-quarter turn (-14°); the left-wall stop (about) turns the room FURTHER
-   the same way (to -55°) so the left wall swings around to face us head-on.
-   Turning it the other way (toward +deg) instead shows the wall's BACK face —
-   mirrored and filling the screen (the original "glitch through the wall" bug).
-   All values glide smoothly between stops. */
-type Face = "back" | "left" | "right" | "floor";
-type Cam = { x: number; y: number; z: number; ry: number; rx: number; pox: number; rry: number };
-type Anchor = { id: string; face: Face; x: string; y: string; cam: Cam };
-
-const ANCHORS: Anchor[] = [
-  // left wall — the head-on stop the page lands on
-  { id: "about",       face: "left",  x: "44%", y: "44%", cam: { x: 420, y: 50, z: 240, ry: 0, rx: 0, pox: 43, rry: -55 } },
-  // back wall, swept left → right
-  { id: "education",   face: "back",  x: "24%", y: "34%", cam: { x: 250, y: 55, z: 190, ry: 0, rx: 0, pox: 43, rry: -14 } },
-  { id: "experience",  face: "back",  x: "55%", y: "34%", cam: { x: -30, y: 55, z: 195, ry: 0, rx: 0, pox: 43, rry: -14 } },
-  { id: "skills",      face: "back",  x: "78%", y: "40%", cam: { x: -250, y: 35, z: 190, ry: 0, rx: 0, pox: 43, rry: -14 } },
-  // right wall, back corner → front
-  { id: "involvement", face: "right", x: "38%", y: "40%", cam: { x: -90, y: 26, z: -110, ry: 54, rx: 0, pox: 43, rry: -14 } },
-  { id: "contact",     face: "right", x: "52%", y: "44%", cam: { x: -150, y: 28, z: -110, ry: 54, rx: 0, pox: 43, rry: -14 } },
-];
+// the WebGL canvas is client-only — keep it off the server (Next 16 lazy-load guide)
+const RoomScene = dynamic(() => import("./RoomScene"), { ssr: false });
 
 const stById = (id: string) => stations.find((s) => s.id === id);
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-/* ---------- the one-page résumé / fast-lane view ---------- */
+/* ---------- the one-page résumé / fast-lane view (carried over unchanged) ---------- */
 function ResumeView({ onBack }: { onBack: () => void }) {
   return (
     <>
@@ -133,173 +105,150 @@ function ResumeView({ onBack }: { onBack: () => void }) {
   );
 }
 
-/* ---------- a single placeholder marker on a wall/floor ---------- */
-function AnchorMarker({ a, active, onClick }: { a: Anchor; active: boolean; onClick: () => void }) {
-  const st = stById(a.id);
-  return (
-    <button
-      className={"anchor" + (a.face === "floor" ? " on-floor" : "") + (active ? " is-focus" : "")}
-      style={{ left: a.x, top: a.y }}
-      data-id={a.id}
-      onClick={onClick}
-      aria-label={`Focus ${st?.tab ?? a.id}`}
-    >
-      <span className="a-kick">{st?.kicker ?? ""}</span>
-      <span className="a-name">{st?.tab ?? a.id}</span>
-      <span className="a-tag">object · phase 2</span>
-    </button>
-  );
-}
-
 export default function Portfolio() {
   const [resumeOpen, setResumeOpen] = useState(false);
   const [focus, setFocus] = useState(0);
+  const [inspect, setInspect] = useState<number | null>(null); // stop index being inspected, or null
 
-  const stageRef = useRef<HTMLDivElement>(null);
-  const cameraRef = useRef<HTMLDivElement>(null);
-  const roomRef = useRef<HTMLDivElement>(null);
-  const hintRef = useRef<HTMLDivElement>(null);
-
-  // imperative engine state the React tree shouldn't re-render on
+  // imperative engine state the 3D rig reads each frame (no re-render per frame)
   const targetF = useRef(0);
   const curF = useRef(0);
+  const curZoom = useRef(0);
+  const inspectRef = useRef<number | null>(null);
   const resumeRef = useRef(false);
+  const prevInspect = useRef<number | null>(null);
 
-  // jump the camera to an anchor (used by the focus rail + marker clicks)
-  const goToRef = useRef<(i: number) => void>(() => {});
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const hintRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const readBtnRef = useRef<HTMLButtonElement>(null);
+  const hintGone = useRef(false);
 
+  const N = STOPS.length;
+  const clampF = (v: number) => Math.max(0, Math.min(N - 1, v));
+  const hideHint = () => {
+    if (hintGone.current) return;
+    hintGone.current = true;
+    hintRef.current?.classList.add("gone");
+  };
+
+  // keep engine mirrors + body flags in sync with React state
   useEffect(() => {
     resumeRef.current = resumeOpen;
     document.body.classList.toggle("resume-open", resumeOpen);
   }, [resumeOpen]);
 
-  /* intro reveal + escape-to-close */
   useEffect(() => {
-    const raf = requestAnimationFrame(() => setTimeout(() => document.body.classList.add("lit"), 80));
+    inspectRef.current = inspect;
+    document.body.classList.toggle("inspecting", inspect != null);
+  }, [inspect]);
+
+  // a11y: move focus into the card on open, back to the "read" affordance on close
+  useEffect(() => {
+    if (inspect != null) {
+      const el = cardRef.current?.querySelector<HTMLElement>("[data-autofocus]") ?? cardRef.current;
+      el?.focus();
+    } else if (prevInspect.current != null) {
+      readBtnRef.current?.focus();
+    }
+    prevInspect.current = inspect;
+  }, [inspect]);
+
+  // intro reveal + keyboard (Esc to close; arrows / page keys to step between stops)
+  useEffect(() => {
+    const lit = () => document.body.classList.add("lit");
+    const raf = requestAnimationFrame(() => setTimeout(lit, 80));
+    // reveal even if the tab loads in the background (rAF throttled) so it never sits blank
+    const litFallback = setTimeout(lit, 600);
+    const hintTimer = setTimeout(hideHint, 7000);
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setResumeOpen(false);
+      if (e.key === "Escape") {
+        if (inspectRef.current != null) setInspect(null);
+        else if (resumeRef.current) setResumeOpen(false);
+        return;
+      }
+      if (resumeRef.current || inspectRef.current != null) return;
+      const step = (n: number) => {
+        targetF.current = clampF(Math.round(targetF.current) + n);
+        hideHint();
+      };
+      if (["ArrowDown", "ArrowRight", "PageDown"].includes(e.key)) {
+        step(1);
+        e.preventDefault();
+      } else if (["ArrowUp", "ArrowLeft", "PageUp"].includes(e.key)) {
+        step(-1);
+        e.preventDefault();
+      } else if (e.key === "Home") {
+        targetF.current = 0;
+        hideHint();
+      } else if (e.key === "End") {
+        targetF.current = N - 1;
+        hideHint();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
+      clearTimeout(litFallback);
+      clearTimeout(hintTimer);
       cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* the scroll-to-focus camera engine (runs once) */
+  // scroll wheel over the canvas → glide between stops
   useEffect(() => {
-    const stage = stageRef.current!;
-    const camera = cameraRef.current!;
-    const room = roomRef.current!;
-    const N = ANCHORS.length;
-    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const clampF = (v: number) => Math.max(0, Math.min(N - 1, v));
-
-    const goTo = (i: number) => {
-      targetF.current = clampF(i);
-      hideHint();
-    };
-    goToRef.current = goTo;
-
-    // wheel → glide between anchors
+    const el = sceneRef.current;
+    if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (resumeRef.current) return;
+      if (resumeRef.current || inspectRef.current != null) return;
       const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
       targetF.current = clampF(targetF.current + d * 0.0045);
       hideHint();
       e.preventDefault();
     };
-    stage.addEventListener("wheel", onWheel, { passive: false });
-
-    // keys → step between anchors
-    const onKey = (e: KeyboardEvent) => {
-      if (resumeRef.current) return;
-      const step = (n: number) => { targetF.current = clampF(Math.round(targetF.current) + n); hideHint(); };
-      if (["ArrowDown", "ArrowRight", "PageDown", " "].includes(e.key)) { step(1); e.preventDefault(); }
-      else if (["ArrowUp", "ArrowLeft", "PageUp"].includes(e.key)) { step(-1); e.preventDefault(); }
-      else if (e.key === "Home") { targetF.current = 0; }
-      else if (e.key === "End") { targetF.current = N - 1; }
-    };
-    window.addEventListener("keydown", onKey);
-
-    // drag (pointer / touch) → vertical drag scrubs focus
-    let dragging = false, startY = 0, startF = 0, moved = 0;
-    const onDown = (e: PointerEvent) => {
-      if (resumeRef.current) return;
-      if ((e.target as HTMLElement).closest(".anchor, .topbar, .focusnav")) return;
-      dragging = true; moved = 0; startY = e.clientY; startF = targetF.current;
-      stage.classList.add("dragging");
-      stage.setPointerCapture(e.pointerId);
-    };
-    const onMove = (e: PointerEvent) => {
-      if (!dragging) return;
-      moved += Math.abs(e.movementY || 0);
-      targetF.current = clampF(startF + (startY - e.clientY) * 0.006);
-      if (moved > 6) hideHint();
-    };
-    const endDrag = () => { dragging = false; stage.classList.remove("dragging"); };
-    stage.addEventListener("pointerdown", onDown);
-    stage.addEventListener("pointermove", onMove);
-    stage.addEventListener("pointerup", endDrag);
-    stage.addEventListener("pointercancel", endDrag);
-
-    // render loop
-    let lastNearest = -1;
-    let raf = 0;
-    const apply = () => {
-      if (reduce) curF.current = targetF.current;
-      else {
-        curF.current += (targetF.current - curF.current) * 0.09;
-        if (Math.abs(targetF.current - curF.current) < 0.001) curF.current = targetF.current;
-      }
-      const f = curF.current;
-      const i0 = Math.floor(f), i1 = Math.min(N - 1, i0 + 1), t = f - i0;
-      const a = ANCHORS[i0].cam, b = ANCHORS[i1].cam;
-      camera.style.setProperty("--cam-x", lerp(a.x, b.x, t).toFixed(2) + "px");
-      camera.style.setProperty("--cam-y", lerp(a.y, b.y, t).toFixed(2) + "px");
-      camera.style.setProperty("--cam-z", lerp(a.z, b.z, t).toFixed(2) + "px");
-      camera.style.setProperty("--cam-ry", lerp(a.ry, b.ry, t).toFixed(3) + "deg");
-      camera.style.setProperty("--cam-rx", lerp(a.rx, b.rx, t).toFixed(3) + "deg");
-      stage.style.setProperty("--po-x", lerp(a.pox, b.pox, t).toFixed(2) + "%"); // glide the eye too
-      room.style.setProperty("--room-ry", lerp(a.rry, b.rry, t).toFixed(3) + "deg"); // turn the room to face the wall
-
-      const nearest = Math.round(f);
-      if (nearest !== lastNearest) { lastNearest = nearest; setFocus(nearest); }
-      raf = requestAnimationFrame(apply);
-    };
-    apply();
-
-    // auto-hide the scroll hint
-    let hintGone = false;
-    function hideHint() {
-      if (hintGone) return;
-      hintGone = true;
-      hintRef.current?.classList.add("gone");
-    }
-    const hintTimer = setTimeout(hideHint, 7000);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(hintTimer);
-      stage.removeEventListener("wheel", onWheel);
-      window.removeEventListener("keydown", onKey);
-      stage.removeEventListener("pointerdown", onDown);
-      stage.removeEventListener("pointermove", onMove);
-      stage.removeEventListener("pointerup", endDrag);
-      stage.removeEventListener("pointercancel", endDrag);
-    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const anchorsOn = (face: Face) => ANCHORS.filter((a) => a.face === face);
-  const renderAnchors = (face: Face) =>
-    anchorsOn(face).map((a) => {
-      const idx = ANCHORS.indexOf(a);
-      return (
-        <AnchorMarker key={a.id} a={a} active={focus === idx} onClick={() => goToRef.current(idx)} />
-      );
-    });
+  // glide the camera to a stop (focus rail + first marker click); open / close the close-up
+  const goTo = (i: number) => {
+    targetF.current = clampF(i);
+    hideHint();
+  };
+  const openInspect = (i: number) => {
+    targetF.current = clampF(i);
+    setInspect(i);
+  };
+  const closeInspect = () => setInspect(null);
+  // a marker click: first focuses the stop, then (when already focused) opens its card
+  const onActivate = (i: number) => {
+    if (focus === i) openInspect(i);
+    else goTo(i);
+  };
 
-  const init = ANCHORS[0].cam;
+  const focusStation = stById(STOPS[focus].id);
+  const inspectStation = inspect != null ? stById(STOPS[inspect].id) : null;
+
+  // lightweight focus trap: keep Tab cycling inside the open card (a11y for the dialog)
+  const onCardKey = (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab") return;
+    const card = cardRef.current;
+    if (!card) return;
+    const f = card.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      last.focus();
+      e.preventDefault();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      first.focus();
+      e.preventDefault();
+    }
+  };
 
   return (
     <>
@@ -321,51 +270,26 @@ export default function Portfolio() {
         </div>
       </header>
 
-      {/* ===== the room ===== */}
-      <main
-        className="stage"
-        ref={stageRef}
-        style={{ "--po-x": init.pox + "%" } as React.CSSProperties}
-      >
-        <div
-          className="camera"
-          ref={cameraRef}
-          style={
-            {
-              "--cam-x": init.x + "px",
-              "--cam-y": init.y + "px",
-              "--cam-z": init.z + "px",
-              "--cam-ry": init.ry + "deg",
-              "--cam-rx": init.rx + "deg",
-            } as React.CSSProperties
-          }
-        >
-          <div
-            className="room"
-            ref={roomRef}
-            style={{ "--room-ry": init.rry + "deg" } as React.CSSProperties}
-          >
-            <div className="face face--ceil" aria-hidden="true" />
-            <div className="face face--floor">{renderAnchors("floor")}</div>
-            <div className="face face--left">{renderAnchors("left")}</div>
-            <div className="face face--right">{renderAnchors("right")}</div>
-            <div className="face face--back">{renderAnchors("back")}</div>
-          </div>
-        </div>
-      </main>
+      {/* ===== the 3D room ===== */}
+      <div className="scene" ref={sceneRef}>
+        <RoomScene
+          targetF={targetF}
+          curF={curF}
+          curZoom={curZoom}
+          inspectRef={inspectRef}
+          focus={focus}
+          onFocus={setFocus}
+          onActivate={onActivate}
+        />
+      </div>
 
       {/* ===== focus rail ===== */}
       <nav className="focusnav" aria-label="Focus points">
-        {ANCHORS.map((a, i) => {
-          const st = stById(a.id);
+        {STOPS.map((s, i) => {
+          const st = stById(s.id);
           return (
-            <button
-              key={a.id}
-              className={focus === i ? "on" : ""}
-              onClick={() => goToRef.current(i)}
-              aria-current={focus === i}
-            >
-              <span className="fn-label">{st?.tab ?? a.id}</span>
+            <button key={s.id} className={focus === i ? "on" : ""} onClick={() => goTo(i)} aria-current={focus === i}>
+              <span className="fn-label">{st?.tab ?? s.id}</span>
               <span className="fn-dot" />
             </button>
           );
@@ -378,14 +302,102 @@ export default function Portfolio() {
         <span className="wheel" aria-hidden="true" />
       </div>
 
+      {/* ===== keyboard-friendly "open the focused stop" affordance ===== */}
+      {!resumeOpen && (
+        <button
+          ref={readBtnRef}
+          className="read-cue"
+          onClick={() => openInspect(focus)}
+          aria-label={`Read ${focusStation?.tab ?? "section"}`}
+        >
+          Read {focusStation?.tab ?? "section"} →
+        </button>
+      )}
+
       {/* ===== résumé fast-lane ===== */}
-      <section
-        className={"resume" + (resumeOpen ? " show" : "")}
-        aria-label="Résumé view"
-        aria-hidden={!resumeOpen}
-      >
+      <section className={"resume" + (resumeOpen ? " show" : "")} aria-label="Résumé view" aria-hidden={!resumeOpen}>
         {resumeOpen && <ResumeView onBack={() => setResumeOpen(false)} />}
       </section>
+
+      {/* ===== inspect / click-to-read card (carried over unchanged) ===== */}
+      {inspect != null && inspectStation && (
+        <div className="inspect-layer">
+          <div className="inspect-scrim" aria-hidden="true" onClick={closeInspect} />
+          <div
+            className="inspect-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="inspect-title"
+            ref={cardRef}
+            onKeyDown={onCardKey}
+          >
+            <button className="inspect-close" onClick={closeInspect} data-autofocus>
+              ← Back to the room
+            </button>
+            <p className="ic-kick">{inspectStation.kicker}</p>
+            <h2 className="ic-title" id="inspect-title">
+              {inspectStation.title}
+            </h2>
+            <p className="ic-body">{inspectStation.body}</p>
+
+            {inspectStation.roles && (
+              <div className="ic-roles">
+                {inspectStation.roles.map((r, i) => (
+                  <div className="ic-role" key={i}>
+                    <p className="ic-role-head">
+                      <b>{r.role}</b> — {r.org}
+                    </p>
+                    <p className="ic-role-date">{r.date}</p>
+                    <p className="ic-role-note">{r.note}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {inspectStation.software && (
+              <div className="ic-soft">
+                {inspectStation.software.map((s, i) => (
+                  <div className="ic-soft-row" key={i}>
+                    <span className="ic-soft-name">{s[0]}</span>
+                    <span className="ic-soft-desc">{s[1]}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {inspectStation.learning && (
+              <div className="ic-tags">
+                {inspectStation.learning.map((t, i) => (
+                  <span className="ic-tag" key={i}>
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {inspectStation.facts && (
+              <dl className="ic-facts">
+                {inspectStation.facts.map(([k, v], i) => (
+                  <div className="ic-fact" key={i}>
+                    <dt>{k}</dt>
+                    <dd>{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+
+            {inspectStation.links && (
+              <div className="ic-links">
+                <a href={identity.linkedin} target="_blank" rel="noopener">
+                  LinkedIn ↗
+                </a>
+                <a href={`mailto:${identity.email}`}>{identity.email}</a>
+                <span className="ic-link-note">Résumé available on request</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -18,7 +18,7 @@ tuning in a real browser (the headless preview can't hold a WebGL context — se
 ## Pointers
 - Plan: [docs/00_plan.md](docs/00_plan.md)
 - Decision log: [docs/decisions/](docs/decisions/)
-- Current turnover: [docs/artifacts/handoffs/2026-06-23_190710_phase-3_3d-rebuild-and-camera.md](docs/artifacts/handoffs/2026-06-23_190710_phase-3_3d-rebuild-and-camera.md)
+- Current turnover: [docs/artifacts/handoffs/2026-06-25_095000_phase-3_furniture-textures-camera.md](docs/artifacts/handoffs/2026-06-25_095000_phase-3_furniture-textures-camera.md)
 
 ## Phase index
 | # | Name | Status | Closeout date | Phase file |

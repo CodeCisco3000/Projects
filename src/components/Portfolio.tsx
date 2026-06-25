@@ -25,6 +25,10 @@ const RoomScene = dynamic(() => import("./RoomScene"), { ssr: false });
 
 const stById = (id: string) => stations.find((s) => s.id === id);
 
+// one scroll = one stop; ignore further wheel events for this long (ms) so a fast
+// scroll steps calmly one-by-one instead of flying through every stop
+const STEP_COOLDOWN = 600;
+
 /* ---------- the one-page résumé / fast-lane view (carried over unchanged) ---------- */
 function ResumeView({ onBack }: { onBack: () => void }) {
   return (
@@ -197,16 +201,24 @@ export default function Portfolio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // scroll wheel over the canvas → glide between stops
+  // scroll wheel over the canvas → step ONE stop per gesture (not continuous
+  // scrubbing). A cooldown swallows the rapid burst of events a fast scroll fires,
+  // so the camera advances one item at a time (with its fixed pan+zoom) instead of
+  // spazzing through all of them. The rig pans at a constant speed from there.
   useEffect(() => {
     const el = sceneRef.current;
     if (!el) return;
+    let lastStep = 0;
     const onWheel = (e: WheelEvent) => {
       if (resumeRef.current || inspectRef.current != null) return;
-      const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-      targetF.current = clampF(targetF.current + d * 0.0045);
-      hideHint();
       e.preventDefault();
+      const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      if (Math.abs(d) < 2) return;
+      const now = e.timeStamp || performance.now();
+      if (now - lastStep < STEP_COOLDOWN) return;
+      lastStep = now;
+      targetF.current = clampF(Math.round(targetF.current) + (d > 0 ? 1 : -1));
+      hideHint();
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);

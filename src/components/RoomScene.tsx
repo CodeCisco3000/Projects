@@ -278,16 +278,62 @@ const GAMING_DEPTH = 0.26;
 const GAMING_ROT_Y = 0;
 const GAMING_SCALE = 1.0;
 const SCREEN_GLOW = 3.0;
+const MONITOR_SPREAD = 1.25; // half the gap between the two monitors (center offset, world units)
+const MONITOR_TOE = 0.18;    // inward toe-in angle so both face the chair (radians)
 const PC_URL = "/models/gaming-pc/gaming-computer.glb"; // CC-BY, Alex Safayan — see CREDITS.md
 const TOWER_HEIGHT = 2.2;  // case height in world units (~a mid-tower)
 const TOWER_ROT_Y = Math.PI / 2; // quarter-turn so the PC's front faces the camera (room, +Z)
-const TOWER_GAP = 1.5;     // how far the tower stands to the room-side of the desk
+const TOWER_GAP = 0.8;     // how far the tower stands to the room-side of the desk
 const TOWER_DEPTH = 0.32;  // 0→1 where along the desk's depth the tower stands
 
 /* RGB lighting: the PC's fans/internals + the desk underglow slowly cycle through
    the rainbow. SPEED = hue turns per second (lower = calmer); GLOW = brightness. */
 const RGB_SPEED = 0.05;
 const RGB_GLOW = 0.85;
+
+const KEYBOARD_URL = "/models/keyboard/keyboard.glb"; // CC-BY, Alex Safayan — see CREDITS.md
+const KEYBOARD_W = 1.7;  // keyboard width on the desk (world units)
+const MOUSE_URL = "/models/mouse/mouse.glb"; // CC0, CreativeTrio — see CREDITS.md
+const MOUSE_W = 0.36;    // mouse length on the desk (world units)
+
+/* Keyboard + mouse repaint. Both .glb models ship in a pale white/grey that clashes
+   with the dark RGB rig, so we recolor their baked materials (cloned per use — never
+   the shared useGLTF cache) to match. Matched by each material's ORIGINAL base color,
+   so it's deterministic. Tune against localhost; the headless preview can't show WebGL. */
+const KB_CASE = "#16181d";     // keyboard chassis/frame + cable (was mid-grey)
+const KB_KEYS = "#2b2f38";     // keycap bodies (was white); kept a readable grey so the
+                               // caps stay visible, with the RGB only tinting them
+const KB_RGB_GLOW = 0.22;      // how hot the per-key RGB backlight burns (0 = keys stay dark)
+const MOUSE_BODY = "#ffffff";  // mouse shell tint — white (multiplies its diffuse map 1:1)
+
+/* Per-material repaint rules for the two desk .glb models. Module-level so their
+   identity is stable for DeskItem's memo. Return true to flag a (cloned) material for
+   the rainbow RGB cycle; false just recolors it. */
+function kbPaint(m: THREE.MeshStandardMaterial): boolean {
+  if (!m.color) return false;
+  const white = m.color.r > 0.8 && m.color.g > 0.8 && m.color.b > 0.8; // the keycaps
+  if (white) {
+    m.color.set(KB_KEYS);
+    m.roughness = 0.5;
+    m.metalness = 0;
+    m.emissiveIntensity = KB_RGB_GLOW;
+    return true; // glow these = the per-key RGB backlight
+  }
+  m.color.set(KB_CASE); // unify frame / base / accents / cable into one dark chassis
+  m.roughness = 0.6;
+  m.metalness = 0.1;
+  return false;
+}
+function mousePaint(m: THREE.MeshStandardMaterial): boolean {
+  // the .glb's diffuse atlas isn't actually white, so tinting it never reads white —
+  // drop the map and render a solid white shell instead.
+  m.map = null;
+  m.color.set(MOUSE_BODY);
+  m.metalness = 0.1;
+  m.roughness = 0.5;
+  m.needsUpdate = true;
+  return false;
+}
 
 const GAMING = {
   frame: "#15171c",      // matte dark chassis (bezel, keyboard, case)
@@ -386,6 +432,191 @@ function GamingPC({
   return <primitive object={node} />;
 }
 
+/* DeskItem: a small .glb sitting ON the desk (keyboard, mouse). Auto-scales so a
+   reference footprint = `targetW`, then drops its base to the desk surface (local
+   y=0) centered at [x, z]. `anchorLargest` scales/centers on the model's biggest
+   single mesh instead of the whole bounding box — needed for the mouse, whose long
+   modeled cord would otherwise shrink the body and throw off centering. */
+function DeskItem({
+  url,
+  targetW,
+  x,
+  z,
+  rotY = 0,
+  anchorLargest = false,
+  paint,
+}: {
+  url: string;
+  targetW: number;
+  x: number;
+  z: number;
+  rotY?: number;
+  anchorLargest?: boolean;
+  paint?: (mat: THREE.MeshStandardMaterial) => boolean; // mutate a cloned material in
+                                                        // place; return true to RGB-cycle it
+}) {
+  const { scene } = useGLTF(url);
+  const rgbMats = useRef<THREE.MeshStandardMaterial[]>([]);
+  const node = useMemo(() => {
+    const o = scene.clone(true);
+    o.rotation.set(0, rotY, 0);
+    o.scale.setScalar(1);
+    o.updateMatrixWorld(true);
+
+    const largestMesh = (): THREE.Box3 => {
+      let best: THREE.Box3 | null = null;
+      let bestVol = -1;
+      o.traverse((c) => {
+        const m = c as THREE.Mesh;
+        if (!m.isMesh) return;
+        const b = new THREE.Box3().setFromObject(m);
+        const s = b.getSize(new THREE.Vector3());
+        const vol = s.x * s.y * s.z;
+        if (vol > bestVol) { bestVol = vol; best = b; }
+      });
+      return best ?? new THREE.Box3().setFromObject(o);
+    };
+
+    const ref = anchorLargest ? largestMesh() : new THREE.Box3().setFromObject(o);
+    const refSize = ref.getSize(new THREE.Vector3());
+    o.scale.setScalar(targetW / Math.max(refSize.x, refSize.z));
+    o.updateMatrixWorld(true);
+
+    const anchor = anchorLargest ? largestMesh() : new THREE.Box3().setFromObject(o);
+    const whole = new THREE.Box3().setFromObject(o);
+    const ax = (anchor.min.x + anchor.max.x) / 2;
+    const az = (anchor.min.z + anchor.max.z) / 2;
+    o.position.set(x - ax, -whole.min.y, z - az); // center on the body, base on the desk
+
+    // repaint baked materials (cloned per use so we never mutate useGLTF's shared
+    // cache). Cloning per mesh also lets flagged keycaps spread the RGB hue into a wave.
+    const found: THREE.MeshStandardMaterial[] = [];
+    if (paint) {
+      o.traverse((c) => {
+        const mesh = c as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const apply = (mm: THREE.Material): THREE.Material => {
+          const sm = (mm as THREE.MeshStandardMaterial).clone();
+          if (!sm.emissive) sm.emissive = new THREE.Color(0, 0, 0);
+          if (paint(sm)) found.push(sm);
+          return sm;
+        };
+        mesh.material = Array.isArray(mesh.material) ? mesh.material.map(apply) : apply(mesh.material);
+      });
+    }
+    rgbMats.current = found;
+    return o;
+  }, [scene, targetW, x, z, rotY, anchorLargest, paint]);
+
+  // rainbow backlight: spread the hue across the flagged keycap materials so the glow
+  // reads as a per-key wave rather than one uniform color (RGB_SPEED sets the drift).
+  useFrame((state) => {
+    const arr = rgbMats.current;
+    if (!arr.length) return;
+    const t = state.clock.elapsedTime * RGB_SPEED;
+    for (let i = 0; i < arr.length; i++) {
+      arr[i].emissive.setHSL((t + i / arr.length) % 1, 1, 0.5);
+    }
+  });
+
+  return <primitive object={node} />;
+}
+
+/* MonitorWiring: a few dark cables draping from the monitor backs down behind the
+   stand — the "cable management" look. Built as tube geometry along smooth curves. */
+function MonitorWiring({ spread }: { spread: number }) {
+  const geoms = useMemo(() => {
+    const tube = (pts: number[][]) =>
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2]))),
+        28, 0.02, 6, false,
+      );
+    return [
+      tube([[-spread, 1.05, -0.45], [-spread * 0.7, 0.5, -0.56], [-0.15, 0.1, -0.55], [-0.08, 0.04, -0.5]]),
+      tube([[spread, 1.0, -0.45], [spread * 0.7, 0.55, -0.56], [0.15, 0.1, -0.55], [0.06, 0.04, -0.5]]),
+      tube([[0, 0.12, -0.5], [-0.12, 0.05, -0.62], [-0.3, 0.03, -0.72], [-0.5, 0.03, -0.8]]),
+    ];
+  }, [spread]);
+  return (
+    <group>
+      {geoms.map((g, i) => (
+        <mesh key={i} geometry={g}>
+          <meshStandardMaterial color="#0b0c0f" roughness={0.85} metalness={0.1} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/* one monitor HEAD (no foot of its own — it hangs off the shared DualStand). The
+   slightly back-tilted head carries the lit screen + a VESA stub on its back that
+   meets the stand arm. `x` offsets it across the desk; `rotY` toes it inward. */
+function Monitor({ x, rotY, tex }: { x: number; rotY: number; tex: THREE.Texture }) {
+  return (
+    <group position={[x, 0, -0.3]} rotation={[0, rotY, 0]}>
+      <group position={[0, 1.16, 0]} rotation={[-0.05, 0, 0]}>
+        {/* back shell */}
+        <mesh position={[0, 0, -0.05]}>
+          <boxGeometry args={[2.36, 1.34, 0.07]} />
+          <meshStandardMaterial color={GAMING.frame} roughness={0.5} metalness={0.4} />
+        </mesh>
+        {/* slim front frame */}
+        <mesh position={[0, 0, 0]}>
+          <boxGeometry args={[2.42, 1.4, 0.04]} />
+          <meshStandardMaterial color={GAMING.matte} roughness={0.6} />
+        </mesh>
+        {/* the lit screen */}
+        <mesh position={[0, 0.03, 0.025]}>
+          <planeGeometry args={[2.26, 1.22]} />
+          <meshStandardMaterial map={tex} emissive="#ffffff" emissiveMap={tex} emissiveIntensity={0.6} roughness={0.3} metalness={0} />
+        </mesh>
+        {/* brand dot on the chin */}
+        <mesh position={[0, -0.63, 0.03]}>
+          <boxGeometry args={[0.07, 0.025, 0.012]} />
+          <meshStandardMaterial color={GAMING.metal} roughness={0.3} metalness={0.8} />
+        </mesh>
+        {/* VESA mount stub that meets the stand arm */}
+        <mesh position={[0, 0, -0.12]}>
+          <boxGeometry args={[0.18, 0.18, 0.12]} />
+          <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.6} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+/* a single dual-monitor desk stand: weighted base, center pole, and a crossbar
+   with two short forward arms the monitor heads mount onto. `spread` matches the
+   monitors' center offset so the arms line up. */
+function DualStand({ spread }: { spread: number }) {
+  return (
+    <group position={[0, 0, -0.3]}>
+      {/* weighted base on the desk */}
+      <mesh position={[0, 0.03, -0.16]}>
+        <boxGeometry args={[0.52, 0.06, 0.4]} />
+        <meshStandardMaterial color={GAMING.frame} roughness={0.5} metalness={0.5} />
+      </mesh>
+      {/* center pole */}
+      <mesh position={[0, 0.62, -0.24]}>
+        <cylinderGeometry args={[0.05, 0.06, 1.24, 20]} />
+        <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.7} />
+      </mesh>
+      {/* crossbar the heads hang from */}
+      <mesh position={[0, 1.16, -0.24]}>
+        <boxGeometry args={[2 * spread + 0.3, 0.07, 0.07]} />
+        <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.7} />
+      </mesh>
+      {/* short arms reaching forward to each monitor's VESA stub */}
+      {[-spread, spread].map((sx, i) => (
+        <mesh key={i} position={[sx, 1.16, -0.15]}>
+          <boxGeometry args={[0.08, 0.08, 0.22]} />
+          <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.6} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
   const px = THREE.MathUtils.lerp(deskBox.min.x, deskBox.max.x, GAMING_ALONG);
   const pz = THREE.MathUtils.lerp(deskBox.min.z, deskBox.max.z, GAMING_DEPTH);
@@ -452,17 +683,67 @@ function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
     return t;
   }, []);
 
-  // desk-side RGB surfaces + accent light, all cycled together each frame
-  const keyGlow = useRef<THREE.MeshStandardMaterial>(null);
+  // procedural mousepad surface: a dark woven cloth with a stitched border + faint
+  // monogram, drawn once to a canvas. This is what fixes the "out of place" flat box —
+  // it gives the mat real fabric grain at the resolution of the .glb models around it.
+  // Cheap (one 1024×420 texture), so it stays inside the WebGL budget (ADR-0011).
+  const matTex = useMemo(() => {
+    const W = 1024, H = 420;
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const x = c.getContext("2d");
+    if (x) {
+      // base cloth + a soft center sheen
+      x.fillStyle = "#0d0e12";
+      x.fillRect(0, 0, W, H);
+      const rg = x.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, W * 0.6);
+      rg.addColorStop(0, "rgba(46,52,66,0.35)");
+      rg.addColorStop(1, "rgba(0,0,0,0)");
+      x.fillStyle = rg;
+      x.fillRect(0, 0, W, H);
+      // fine diagonal weave (cross-hatch in both directions)
+      x.globalAlpha = 0.05;
+      x.strokeStyle = "#aeb6c4";
+      x.lineWidth = 1;
+      for (let i = -H; i < W; i += 4) {
+        x.beginPath(); x.moveTo(i, 0); x.lineTo(i + H, H); x.stroke();
+        x.beginPath(); x.moveTo(i, H); x.lineTo(i + H, 0); x.stroke();
+      }
+      x.globalAlpha = 1;
+      // speckle grain so the weave isn't perfectly regular
+      for (let i = 0; i < 2400; i++) {
+        x.fillStyle = `rgba(255,255,255,${Math.random() * 0.04})`;
+        x.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+      }
+      // stitched border
+      x.strokeStyle = "rgba(120,130,145,0.5)";
+      x.lineWidth = 3;
+      x.setLineDash([10, 7]);
+      x.strokeRect(14, 14, W - 28, H - 28);
+      x.setLineDash([]);
+      // faint corner monogram
+      x.globalAlpha = 0.1;
+      x.fillStyle = "#cfd6e2";
+      x.font = "bold 58px system-ui, sans-serif";
+      x.textAlign = "right";
+      x.textBaseline = "bottom";
+      x.fillText("FC", W - 40, H - 30);
+      x.globalAlpha = 1;
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    return t;
+  }, []);
+
+  // desk mat edge + the wall-wash light, cycled together each frame
   const matGlow = useRef<THREE.MeshStandardMaterial>(null);
-  const strip = useRef<THREE.MeshStandardMaterial>(null);
   const accent = useRef<THREE.PointLight>(null);
   const col = useMemo(() => new THREE.Color(), []);
   useFrame((state) => {
     const t = state.clock.elapsedTime * RGB_SPEED;
     if (matGlow.current) matGlow.current.emissive.copy(col.setHSL(t % 1, 1, 0.5));
-    if (keyGlow.current) keyGlow.current.emissive.copy(col.setHSL((t + 0.33) % 1, 1, 0.5));
-    if (strip.current) strip.current.emissive.copy(col.setHSL((t + 0.5) % 1, 1, 0.5));
     if (accent.current) accent.current.color.copy(col.setHSL((t + 0.5) % 1, 1, 0.5));
   });
 
@@ -476,70 +757,27 @@ function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
         </mesh>
         <mesh position={[0, 0.025, 0.35]}>
           <boxGeometry args={[2.55, 0.02, 1.05]} />
-          <meshStandardMaterial color={GAMING.matte} roughness={0.85} />
+          <meshStandardMaterial map={matTex} roughness={0.92} metalness={0} />
         </mesh>
 
-        {/* monitor (faces +Z): flared base, slim neck, slightly tilted head whose
-            screen is the drawn "on" texture (albedo + emissive) */}
-        <group position={[0, 0, -0.3]}>
-          <mesh position={[0, 0.02, 0.02]}>
-            <cylinderGeometry args={[0.32, 0.42, 0.04, 36]} />
-            <meshStandardMaterial color={GAMING.metal} roughness={0.35} metalness={0.7} />
-          </mesh>
-          <mesh position={[0, 0.42, -0.05]} rotation={[0.07, 0, 0]}>
-            <boxGeometry args={[0.1, 0.82, 0.08]} />
-            <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.6} />
-          </mesh>
-          <group position={[0, 1.16, 0]} rotation={[-0.05, 0, 0]}>
-            {/* back shell */}
-            <mesh position={[0, 0, -0.05]}>
-              <boxGeometry args={[2.36, 1.34, 0.07]} />
-              <meshStandardMaterial color={GAMING.frame} roughness={0.5} metalness={0.4} />
-            </mesh>
-            {/* slim front frame */}
-            <mesh position={[0, 0, 0]}>
-              <boxGeometry args={[2.42, 1.4, 0.04]} />
-              <meshStandardMaterial color={GAMING.matte} roughness={0.6} />
-            </mesh>
-            {/* the lit screen */}
-            <mesh position={[0, 0.03, 0.025]}>
-              <planeGeometry args={[2.26, 1.22]} />
-              <meshStandardMaterial map={screenTex} emissive="#ffffff" emissiveMap={screenTex} emissiveIntensity={0.6} roughness={0.3} metalness={0} />
-            </mesh>
-            {/* brand dot on the chin */}
-            <mesh position={[0, -0.63, 0.03]}>
-              <boxGeometry args={[0.07, 0.025, 0.012]} />
-              <meshStandardMaterial color={GAMING.metal} roughness={0.3} metalness={0.8} />
-            </mesh>
-          </group>
-        </group>
+        {/* dual monitors on one shared arm stand, toed inward toward the chair */}
+        <DualStand spread={MONITOR_SPREAD} />
+        <Monitor x={-MONITOR_SPREAD} rotY={MONITOR_TOE} tex={screenTex} />
+        <Monitor x={MONITOR_SPREAD} rotY={-MONITOR_TOE} tex={screenTex} />
 
-        {/* keyboard over an RGB underglow strip */}
-        <mesh position={[-0.18, 0.05, 0.42]}>
-          <boxGeometry args={[1.65, 0.07, 0.46]} />
-          <meshStandardMaterial color={GAMING.frame} roughness={0.7} />
-        </mesh>
-        <mesh position={[-0.18, 0.022, 0.42]}>
-          <boxGeometry args={[1.72, 0.03, 0.5]} />
-          <meshStandardMaterial ref={keyGlow} color={GAMING.matte} emissive={GAMING.rgbA} emissiveIntensity={1.1} roughness={0.5} />
-        </mesh>
+        {/* downloaded detailed keyboard + mouse, repainted to the dark RGB rig */}
+        <DeskItem url={KEYBOARD_URL} targetW={KEYBOARD_W} x={-0.18} z={0.42} paint={kbPaint} />
+        <DeskItem url={MOUSE_URL} targetW={MOUSE_W} x={0.95} z={0.4} paint={mousePaint} />
 
-        {/* mouse */}
-        <mesh position={[0.95, 0.05, 0.4]}>
-          <boxGeometry args={[0.22, 0.08, 0.33]} />
-          <meshStandardMaterial color={GAMING.frame} emissive={GAMING.rgbA} emissiveIntensity={0.4} roughness={0.5} />
-        </mesh>
+        {/* cable management draping behind the monitors */}
+        <MonitorWiring spread={MONITOR_SPREAD} />
 
         {/* the monitor lighting the desk — one calm point light (ADR-0011 budget) */}
         {SCREEN_GLOW > 0 && (
           <pointLight position={[0, 1.0, 0.6]} intensity={SCREEN_GLOW} distance={6} decay={2} color={GAMING.screenGlow} />
         )}
 
-        {/* RGB bias strip behind the monitor + a colored wall-wash light (both cycle) */}
-        <mesh position={[0, 1.05, -0.46]}>
-          <boxGeometry args={[2.1, 0.09, 0.04]} />
-          <meshStandardMaterial ref={strip} color={GAMING.matte} emissive={GAMING.rgbA} emissiveIntensity={RGB_GLOW} roughness={0.5} />
-        </mesh>
+        {/* a colored wall-wash light behind the monitors (cycles; no visible strip) */}
         <pointLight ref={accent} position={[0, 1.1, -0.55]} intensity={2.4} distance={6} decay={2} color={GAMING.rgbA} />
       </group>
 
@@ -565,6 +803,8 @@ function Furniture() {
 useGLTF.preload(BED_URL);
 useGLTF.preload(DESK_URL);
 useGLTF.preload(PC_URL);
+useGLTF.preload(KEYBOARD_URL);
+useGLTF.preload(MOUSE_URL);
 
 /* ---------- one section marker: a lit placard on a wall ---------- */
 function Marker({

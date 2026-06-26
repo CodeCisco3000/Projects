@@ -18,6 +18,14 @@ Third-party assets used in this site, with attribution as required by their lice
   ["Gaming Computer"](https://poly.pizza/m/5cN7W4ufoII) by Alex Safayan,
   licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
 
+- **Keyboard** — `public/models/keyboard/`
+  ["Keyboard"](https://poly.pizza/m/fOy2zvPJAj-) by Alex Safayan,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
+- **Computer Mouse** — `public/models/mouse/`
+  ["Computer Mouse"](https://poly.pizza/m/V2Ebx3pvo4) by CreativeTrio,
+  licensed under [CC0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain), via [Poly Pizza](https://poly.pizza).
+
 ## Textures (CC0 — no attribution required, listed for provenance)
 
 - **Walls — painted plaster** (`public/textures/wall-*`): "PaintedPlaster017", [ambientCG](https://ambientcg.com), CC0.

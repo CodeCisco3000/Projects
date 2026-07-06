@@ -15,9 +15,9 @@
    WebGL canvas never renders on the server.
    ===================================================================== */
 
-import { Suspense, useEffect, useMemo, useRef } from "react";
+import { Suspense, memo, useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { useGLTF, useTexture, Stats, Environment, ContactShadows } from "@react-three/drei";
+import { useGLTF, useTexture, useProgress, Stats, Environment, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
 import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
 
@@ -152,6 +152,33 @@ function surfaceMaps(
   };
 }
 
+/* StaticShadows: freeze the shadow maps. Nothing that casts shadow in this room ever
+   moves (the spinning fan blades deliberately don't cast — see CeilingFan), so
+   re-rendering both shadow maps every frame was pure waste: the two shadow passes
+   roughly DOUBLED the frame's draw calls (~349 → ~170 measured at the widest stop).
+   Instead, shadows render for a few frames whenever the asset loaders finish (models
+   just appeared/changed), then stay frozen. DEV NOTE: after an HMR edit that moves a
+   shadow caster, hard-reload if shadows look stale — production is unaffected. */
+const SHADOW_WARMUP_FRAMES = 8; // a few frames, so late mounts inside the same load settle in
+function StaticShadows() {
+  const { active } = useProgress(); // true while any loader (glTF/texture/HDR) is running
+  const warmup = useRef(0);
+  useEffect(() => {
+    if (!active) warmup.current = 0; // loaders just finished → redraw the shadow maps
+  }, [active]);
+  // all renderer mutation happens through useFrame's state (not a hook-returned `gl`,
+  // which react-hooks/immutability forbids touching). This component lives for the
+  // scene's whole life, so there's no unmount path that needs to restore autoUpdate.
+  useFrame(({ gl }) => {
+    if (gl.shadowMap.autoUpdate) gl.shadowMap.autoUpdate = false;
+    if (warmup.current < SHADOW_WARMUP_FRAMES) {
+      warmup.current++;
+      gl.shadowMap.needsUpdate = true;
+    }
+  });
+  return null;
+}
+
 /* CastReceive: wrap a subtree so every mesh in it casts AND receives real shadows.
    Used for the furniture + window trim; the traverse re-runs after each render, which
    is cheap and catches async-loaded .glb children. Do NOT wrap anything that encloses
@@ -177,8 +204,10 @@ function CastReceive(props: React.ComponentProps<"group">) {
    surface relief as the light moves, the roughness map varies the sheen. (No AO
    map: it needs a 2nd UV set on the plane and adds little on a tiling surface.)
    Maps load once and are cloned per surface for correct, un-stretched tiling.
-   Drop-in upgrade path later: add an aoMap / displacementMap in surfaceMaps. */
-function Walls() {
+   Drop-in upgrade path later: add an aoMap / displacementMap in surfaceMaps.
+   memo(): the shell is static — a `focus` change re-rendering RoomScene must not
+   re-reconcile it (same for Window/CeilingFan/CrownMolding/Furniture below). */
+const Walls = memo(function Walls() {
   const maxAniso = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
   const t = useTexture({
     wallColor: "/textures/wall-color.jpg",
@@ -234,30 +263,32 @@ function Walls() {
       <mesh position={[0, 0, -HZ]} geometry={backWallGeo} castShadow receiveShadow>
         <meshStandardMaterial {...m.back} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.FrontSide} />
       </mesh>
-      {/* left wall (shares the plaster maps + tiling with the right wall) */}
+      {/* left wall (shares the plaster maps + tiling with the right wall). All four
+         surfaces below are FrontSide — the camera never leaves the room, so drawing
+         their back faces (DoubleSide) was wasted rasterizer + lighting work. */}
       <mesh position={[-HX, 0, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[HZ * 2, HY * 2]} />
-        <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
+        <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} />
       </mesh>
       {/* right wall */}
       <mesh position={[HX, 0, 0]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[HZ * 2, HY * 2]} />
-        <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
+        <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} />
       </mesh>
       {/* floor — the main shadow catcher (sun beam + fan pool + furniture shadows) */}
       <mesh position={[0, -HY, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[HX * 2, HZ * 2]} />
-        <meshStandardMaterial {...m.floor} normalScale={[FLOOR_NORMAL, FLOOR_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
+        <meshStandardMaterial {...m.floor} normalScale={[FLOOR_NORMAL, FLOOR_NORMAL]} roughness={1} metalness={0} />
       </mesh>
       {/* ceiling — same plaster as the walls, tinted a touch darker (COLOR.ceil) so
          it reads as a recessive painted ceiling rather than a flat void */}
       <mesh position={[0, HY, 0]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[HX * 2, HZ * 2]} />
-        <meshStandardMaterial {...m.ceil} color={COLOR.ceil} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
+        <meshStandardMaterial {...m.ceil} color={COLOR.ceil} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} />
       </mesh>
     </group>
   );
-}
+});
 
 /* ---------- furniture (.glb) ----------
    It's a bedroom, in a clean modern (low-poly, CC0 Kenney) style — one cohesive
@@ -412,7 +443,8 @@ const GAMING_SCALE = 1.0;
 const SCREEN_GLOW = 3.0;
 const MONITOR_SPREAD = 1.25; // half the gap between the two monitors (center offset, world units)
 const MONITOR_TOE = 0.18;    // inward toe-in angle so both face the chair (radians)
-const PC_URL = "/models/gaming-pc/gaming-computer.glb"; // CC-BY, Alex Safayan — see CREDITS.md
+const PC_URL = "/models/gaming-pc/gaming-computer-opt.glb"; // CC-BY, Alex Safayan — see CREDITS.md
+                // (joined from 175 fragment meshes → a handful — gltf-transform; was 175 draw calls)
 const TOWER_HEIGHT = 2.2;  // case height in world units (~a mid-tower)
 const TOWER_ROT_Y = Math.PI / 2; // quarter-turn so the PC's front faces the camera (room, +Z)
 const TOWER_GAP = 0.8;     // how far the tower stands to the room-side of the desk
@@ -444,7 +476,8 @@ const MOUSE_ROT = 0;                             // facing; flip if the buttons 
    SketchUp export with a deep node hierarchy, so the runtime fit measures the real world
    bounding box rather than trusting raw mesh coords. Facing can't be read cleanly off the
    mesh, so CHAIR_ROT_Y is the knob to flip if it doesn't face the screens — eyeball localhost. */
-const CHAIR_URL = "/models/gaming-chair/scene.gltf"; // CC-BY-4.0, 9arts — see CREDITS.md
+const CHAIR_URL = "/models/gaming-chair/chair-opt.glb"; // CC-BY-4.0, 9arts — see CREDITS.md
+                  // (joined from 67 fragment meshes — gltf-transform; single .glb, textures embedded)
 const CHAIR_HEIGHT = 4.8;     // chair total height, world units (main size knob; tune to desk)
 const CHAIR_ALONG = 0.5;      // 0→1 across the desk width — aligns the chair with the screens
 const CHAIR_GAP = 1.2;        // how far the chair sits out (room-side) from the desk's edge
@@ -892,7 +925,7 @@ function GamingChair({ deskBox }: { deskBox: THREE.Box3 }) {
   return <primitive object={node} />;
 }
 
-function Furniture() {
+const Furniture = memo(function Furniture() {
   const { scene: deskScene } = useGLTF(DESK_URL);
   const desk = useMemo(
     () => fitCorner(deskScene, DESK_TARGET, 1, -1, 0.6, DESK_ROT_Y),
@@ -908,7 +941,7 @@ function Furniture() {
       <GamingChair deskBox={desk.box} />
     </CastReceive>
   );
-}
+});
 useGLTF.preload(BED_URL);
 useGLTF.preload(NIGHTSTAND_URL);
 useGLTF.preload(DESK_URL);
@@ -1070,7 +1103,7 @@ function earthTexture() {
    with starfield + comet-swoosh + orbiting-rocket art, brushed-nickel brackets, and a glowing
    Earth-bowl light kit hugging the motor. Blades spin each frame (FAN_SPEED). Geometry +
    textures are memoized (built once). Any tweaks here: keep public/fan-preview.html in sync. */
-function CeilingFan() {
+const CeilingFan = memo(function CeilingFan() {
   const blades = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
     if (blades.current) blades.current.rotation.y += FAN_SPEED * dt;
@@ -1258,7 +1291,7 @@ function CeilingFan() {
       <pointLight position={[0, -0.85, 0]} intensity={3} distance={0.8} decay={2} color={FAN_LIGHT_COLOR} />
     </group>
   );
-}
+});
 
 /* ---------- crown molding ----------
    A painted cove where the walls meet the ceiling (same paint as the window trim, like
@@ -1285,7 +1318,7 @@ function crownGeo(length: number) {
   return g;
 }
 
-function CrownMolding() {
+const CrownMolding = memo(function CrownMolding() {
   const geos = useMemo(() => ({ back: crownGeo(HX * 2), side: crownGeo(HZ * 2) }), []);
   const mat = useMemo(
     () => new THREE.MeshStandardMaterial({ color: TRIM_PAINT, roughness: 0.55, metalness: 0 }),
@@ -1298,7 +1331,7 @@ function CrownMolding() {
       <mesh geometry={geos.side} material={mat} position={[HX, HY, 0]} rotation={[0, Math.PI, 0]} receiveShadow />
     </group>
   );
-}
+});
 
 /* ---------- window (daylight outside) + sunlight ----------
    A classic white double-hung window on the BACK wall, just right of the education
@@ -1314,7 +1347,7 @@ const WINDOW_ROT_Y = 0; // frame is built facing +Z = straight into the room fro
 const WINDOW_W = 4.6; // glass width (= the hole cut in the wall)
 const WINDOW_H = 2.9; // glass height (split into upper/lower sash)
 
-function Window() {
+const Window = memo(function Window() {
   // real photograph outside (CC0, Poly Haven "Kloofendal 48d Partly Cloudy" — a window-
   // shaped crop from the tonemapped panorama: blue sky, cumulus, leafy suburb on a hill;
   // see CREDITS.md). Procedural canvas skies were tried and read as a kid's drawing.
@@ -1333,7 +1366,14 @@ function Window() {
   const W = WINDOW_W, H = WINDOW_H;
   const D = 0.32; // reveal depth — how far the jambs run OUT through the wall opening
   const J = 0.09; // jamb board thickness
-  const paint = <meshStandardMaterial color={TRIM_PAINT} roughness={0.55} metalness={0} />;
+  // ONE shared paint material for all ~20 trim boards (an inline <meshStandardMaterial>
+  // here would instantiate a separate material per mesh — same look, 20× the state
+  // changes; CrownMolding set the shared-material precedent)
+  const paintMat = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: TRIM_PAINT, roughness: 0.55, metalness: 0 }),
+    [],
+  );
+  const paint = <primitive object={paintMat} attach="material" />;
   return (
     <group position={WINDOW_POS} rotation={[0, WINDOW_ROT_Y, 0]}>
       {/* the outside world — the photo floats past the wall so off-axis views shift it
@@ -1395,7 +1435,7 @@ function Window() {
       </CastReceive>
     </group>
   );
-}
+});
 
 /* Sunlight: a warm beam raking down through the window across the room's center floor.
    The light sits OUTSIDE the window (ADR-0012) — up, off to the left, past the photo
@@ -1645,6 +1685,16 @@ export default function RoomScene({
       camera={{ position: STOPS[0].pos, fov: 60, near: 0.1, far: 100 }}
       dpr={1}
       gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: EXPOSURE }}
+      // DEV-ONLY: expose the renderer + scene so perf audits can read gl.info (draw
+      // calls, triangles, textures) and count meshes from the console. Stripped from
+      // production builds.
+      onCreated={(state) => {
+        if (process.env.NODE_ENV !== "production") {
+          const w = window as Window & { __gl?: THREE.WebGLRenderer; __scene?: THREE.Scene };
+          w.__gl = state.gl;
+          w.__scene = state.scene;
+        }
+      }}
     >
       <color attach="background" args={["#241c12"]} />
       <fog attach="fog" args={["#241c12", 16, 40]} />
@@ -1654,6 +1704,7 @@ export default function RoomScene({
          fan's light kit as the warm shadow-casting overhead accent. The HDRI environment
          (same sky as the window view) gives the metals/glossies real reflections and a
          gentle image-based fill, so ambient/hemi are turned DOWN. Tune in a real browser. */}
+      <StaticShadows />
       <ambientLight intensity={AMBIENT} color="#fff3dd" />
       <hemisphereLight args={["#cfe2ff", "#6b5138", HEMI]} />
       <Suspense fallback={null}>

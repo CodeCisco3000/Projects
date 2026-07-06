@@ -17,6 +17,7 @@ Third-party assets used in this site, with attribution as required by their lice
 - **Gaming Computer** — `public/models/gaming-pc/`
   ["Gaming Computer"](https://poly.pizza/m/5cN7W4ufoII) by Alex Safayan,
   licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+  (`gaming-computer-opt.glb`: 175 fragment meshes joined with gltf-transform for draw-call performance; geometry unchanged.)
 
 - **RGB Keyboard and Mouse** — `public/models/rgb-keyboard-mouse/`
   ["RGB Keyboard and Mouse"](https://sketchfab.com/3d-models/rgb-keyboard-and-mouse-df00ce3e66dc4b75a5f9b49c2e6b1406) by [Jamesley](https://sketchfab.com/jamesley55),
@@ -30,6 +31,7 @@ Third-party assets used in this site, with attribution as required by their lice
 - **Gaming Chair** — `public/models/gaming-chair/`
   ["Gaming Chair"](https://sketchfab.com/3d-models/gaming-chair-6ca81f60846648609b4208c9e7f31b14) by [9arts](https://sketchfab.com/9arts),
   licensed under [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/), via [Sketchfab](https://sketchfab.com).
+  (`chair-opt.glb`: 67 fragment meshes joined into one .glb with gltf-transform for draw-call performance; geometry unchanged.)
 
 ## Textures (CC0 — no attribution required, listed for provenance)
 

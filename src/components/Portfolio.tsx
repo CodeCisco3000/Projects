@@ -115,9 +115,9 @@ export default function Portfolio() {
   const [inspect, setInspect] = useState<number | null>(null); // stop index being inspected, or null
 
   // imperative engine state the 3D rig reads each frame (no re-render per frame)
-  const targetF = useRef(0);
-  const curF = useRef(0);
-  const curZoom = useRef(0);
+  const targetFRef = useRef(0);
+  const curFRef = useRef(0);
+  const curZoomRef = useRef(0);
   const inspectRef = useRef<number | null>(null);
   const resumeRef = useRef(false);
   const prevInspect = useRef<number | null>(null);
@@ -174,7 +174,7 @@ export default function Portfolio() {
       }
       if (resumeRef.current || inspectRef.current != null) return;
       const step = (n: number) => {
-        targetF.current = clampF(Math.round(targetF.current) + n);
+        targetFRef.current = clampF(Math.round(targetFRef.current) + n);
         hideHint();
       };
       if (["ArrowDown", "ArrowRight", "PageDown"].includes(e.key)) {
@@ -184,10 +184,10 @@ export default function Portfolio() {
         step(-1);
         e.preventDefault();
       } else if (e.key === "Home") {
-        targetF.current = 0;
+        targetFRef.current = 0;
         hideHint();
       } else if (e.key === "End") {
-        targetF.current = N - 1;
+        targetFRef.current = N - 1;
         hideHint();
       }
     };
@@ -217,7 +217,7 @@ export default function Portfolio() {
       const now = e.timeStamp || performance.now();
       if (now - lastStep < STEP_COOLDOWN) return;
       lastStep = now;
-      targetF.current = clampF(Math.round(targetF.current) + (d > 0 ? 1 : -1));
+      targetFRef.current = clampF(Math.round(targetFRef.current) + (d > 0 ? 1 : -1));
       hideHint();
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -227,11 +227,11 @@ export default function Portfolio() {
 
   // glide the camera to a stop (focus rail + first marker click); open / close the close-up
   const goTo = (i: number) => {
-    targetF.current = clampF(i);
+    targetFRef.current = clampF(i);
     hideHint();
   };
   const openInspect = (i: number) => {
-    targetF.current = clampF(i);
+    targetFRef.current = clampF(i);
     setInspect(i);
   };
   const closeInspect = () => setInspect(null);
@@ -285,9 +285,9 @@ export default function Portfolio() {
       {/* ===== the 3D room ===== */}
       <div className="scene" ref={sceneRef}>
         <RoomScene
-          targetF={targetF}
-          curF={curF}
-          curZoom={curZoom}
+          targetFRef={targetFRef}
+          curFRef={curFRef}
+          curZoomRef={curZoomRef}
           inspectRef={inspectRef}
           focus={focus}
           onFocus={setFocus}

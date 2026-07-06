@@ -2,6 +2,7 @@
 # Portfolio — Francisco Cardenas
 
 @AGENTS.md
+@GUIDELINES.md
 
 ## Active phase
 **PIVOT to real-time 3D — ADR-0010 (supersedes ADR-0002).** Francisco chose real 3D (Three.js /
@@ -30,6 +31,7 @@ tuning in a real browser (the headless preview can't hold a WebGL context — se
 | 5 | Content finalize & ship | planned | — | tracked in [docs/00_plan.md](docs/00_plan.md) |
 
 ## Standing rules
+- **AAA-realism quality bar (GUIDELINES.md, added 2026-07-06 by Francisco):** realism/immersion over simplicity — PBR everywhere, 2K+ textures, cinematic lighting, high-poly assets, lived-in details, premium interactions. Where it conflicts with the older "calm WebGL budget" habits (ADR-0011's no-shadows/no-env-maps, "primitives keep the budget calm"), the guidelines set the new direction: pursue the quality, validate perf (60 FPS @1440p mid-range GPU), and log an ADR when a budget trade-off is decided.
 - **Full planning, hands-on execution (ADR-0003, supersedes ADR-0001):** locked plan + phases + decision log + handoffs, but build in the main session (no orchestration subagents) for the live-preview design loop. Commit per phase.
 - Redesign = real-time 3D room (Three.js / react-three-fiber), rebuilt to match the CSS room's feel (ADR-0010, supersedes ADR-0002).
 - All paths use forward slashes.

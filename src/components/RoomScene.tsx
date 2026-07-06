@@ -15,9 +15,9 @@
    WebGL canvas never renders on the server.
    ===================================================================== */
 
-import { Suspense, useMemo, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { useGLTF, useTexture, Stats } from "@react-three/drei";
+import { useGLTF, useTexture, Stats, Environment, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
 import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
 
@@ -25,7 +25,7 @@ import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
    back wall at z=-HZ, opening toward +Z. Enlarged per live review so furniture
    has room to breathe (the marker look/close points in roomStops.ts track the
    new walls). */
-const HX = 10;
+const HX = 11; // widened from 10 (2026-07-06) to make floor space beside the bed for the nightstand
 const HY = 5;
 const HZ = 9;
 
@@ -59,12 +59,25 @@ const COLOR = {
 /* ---------- lighting knobs (centralised) ----------
    The room can only be judged in a real browser (the headless preview can't
    hold a WebGL context), so every light is a named knob here — tuning against
-   localhost is then a one-number edit. Kept inside the calm WebGL budget
-   (ADR-0011): a few analytic lights, no shadows/env maps yet. */
+   localhost is then a one-number edit. Lighting overhaul (ADR-0012, supersedes
+   ADR-0011's prohibitions): real soft shadow maps on the two key lights (sun +
+   fan), an HDRI environment for reflections, and baked contact shadows to
+   ground the furniture. Budget: one 2048 + one 1024 shadow map, a 1k HDRI,
+   a one-frame contact-shadow bake. */
 const EXPOSURE = 0.98; // global brightness, rolled off by ACES tone mapping
-const AMBIENT = 0.14;  // daylight fill so the whole room reads bright, not just the beam
-const HEMI = 0.45;     // sky/bounce fill for the daytime look — sun + fan still shape the room
-const SUN = 55;        // warm sunlight beaming through the window (the daytime key)
+const AMBIENT = 0.15;  // warm daylight fill (the HDRI env adds a little cool base fill on top) —
+                       // just enough that shadow sides keep detail instead of crushing to black
+const HEMI = 0.32;     // sky/bounce fill (down from 0.45 — env + shadows carry more shape now)
+const SUN = 2.2;       // sunlight through the window. The sun light now sits OUTSIDE the window
+                       // with decay 0 (parallel-sun feel, no distance falloff), so this is a small
+                       // number — it multiplies straight onto the beam, not against attenuation
+const ENV_URL = "/textures/env-kloofendal-1k.hdr"; // same Poly Haven sky the window view is cropped
+                                                   // from, so reflections match what's outside
+const ENV_INTENSITY = 0.15; // how hard the HDRI fills/reflects (0 = off; keep LOW — it's an
+                            // outdoor sky wrapping an indoor room; 0.35 washed the whole room
+                            // cool and flat, we only want the sheen on metals/glossies)
+const SUN_SHADOW_MAP = 2048; // sun shadow resolution — crisp muntin-grid pattern on the floor
+const FAN_SHADOW_MAP = 1024; // fan light-kit shadow resolution — soft furniture pools only
 
 /* ---------- ceiling fan (overhead fixture + a bit of personality) ----------
    A 5-blade fan with a warm light kit, hung from the ceiling center on a downrod. Its light
@@ -139,6 +152,24 @@ function surfaceMaps(
   };
 }
 
+/* CastReceive: wrap a subtree so every mesh in it casts AND receives real shadows.
+   Used for the furniture + window trim; the traverse re-runs after each render, which
+   is cheap and catches async-loaded .glb children. Do NOT wrap anything that encloses
+   a light source (e.g. the fan's Earth-globe glass around its bulb) — an enclosing
+   caster blacks the light out entirely. */
+function CastReceive(props: React.ComponentProps<"group">) {
+  const ref = useRef<THREE.Group>(null);
+  useEffect(() => {
+    ref.current?.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+  });
+  return <group ref={ref} {...props} />;
+}
+
 /* ---------- the room shell: five plane surfaces ----------
    Floor = wood, the three standing walls = painted plaster (sheetrock), ceiling
    stays a dim painted plane. Each surface gets a full PBR trio — color + normal
@@ -195,28 +226,32 @@ function Walls() {
 
   return (
     <group>
-      {/* back wall — carries the cut-out window opening */}
-      <mesh position={[0, 0, -HZ]} geometry={backWallGeo}>
-        <meshStandardMaterial {...m.back} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
+      {/* back wall — carries the cut-out window opening. It CASTS shadow so the sun
+         (which now sits OUTSIDE the window, ADR-0012) can only enter through the hole
+         — that's what shapes the beam. FrontSide (not DoubleSide) on purpose: a
+         double-sided caster flip-lights its own interior face and self-shadow-acnes;
+         the camera never leaves the room, so the outside face is never seen. */}
+      <mesh position={[0, 0, -HZ]} geometry={backWallGeo} castShadow receiveShadow>
+        <meshStandardMaterial {...m.back} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.FrontSide} />
       </mesh>
       {/* left wall (shares the plaster maps + tiling with the right wall) */}
-      <mesh position={[-HX, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+      <mesh position={[-HX, 0, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[HZ * 2, HY * 2]} />
         <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
       </mesh>
       {/* right wall */}
-      <mesh position={[HX, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
+      <mesh position={[HX, 0, 0]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[HZ * 2, HY * 2]} />
         <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
       </mesh>
-      {/* floor */}
-      <mesh position={[0, -HY, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      {/* floor — the main shadow catcher (sun beam + fan pool + furniture shadows) */}
+      <mesh position={[0, -HY, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[HX * 2, HZ * 2]} />
         <meshStandardMaterial {...m.floor} normalScale={[FLOOR_NORMAL, FLOOR_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
       </mesh>
       {/* ceiling — same plaster as the walls, tinted a touch darker (COLOR.ceil) so
          it reads as a recessive painted ceiling rather than a flat void */}
-      <mesh position={[0, HY, 0]} rotation={[Math.PI / 2, 0, 0]}>
+      <mesh position={[0, HY, 0]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[HX * 2, HZ * 2]} />
         <meshStandardMaterial {...m.ceil} color={COLOR.ceil} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
       </mesh>
@@ -248,6 +283,11 @@ const BED_ROT_Y = 0;    // spin in 90° steps if the headboard faces the wrong w
 const BED_FRAME_WOOD = "#2e2a24";  // dark stained wood (sampled from Nordli_Frame texture)
 const BED_BACKBOARD_TOP = 0.82;    // headboard top as a fraction of the bed's full height
 const BED_BACKBOARD_THICK = 0.35;  // backing-panel thickness, world units (kills the see-through)
+
+const NIGHTSTAND_URL = "/models/nightstand/nightstand.glb"; // CC-BY, Fenik — see CREDITS.md
+const NIGHTSTAND_H = 2.2;    // height, world units (a bit above mattress height)
+const NIGHTSTAND_GAP = 0.25; // air between the bed's right edge and the nightstand
+const NIGHTSTAND_ROT_Y = 0;  // drawers face into the room; spin in 90° steps if wrong
 
 const DESK_URL = "/models/desk/scene.gltf"; // CC-BY, Superenforcer_xp — see CREDITS.md
 const DESK_TARGET = 7;  // longest footprint of the L-desk, world units
@@ -290,10 +330,41 @@ function fitCorner(
    lower part tucks behind the mattress/comforter and only the headboard reads above it. */
 function Bed() {
   const { scene } = useGLTF(BED_URL);
+  const { scene: nsScene } = useGLTF(NIGHTSTAND_URL);
   const { object, box } = useMemo(
     () => fitCorner(scene, BED_TARGET, -1, -1, 0.6, BED_ROT_Y),
     [scene],
   );
+  // nightstand: scaled to a real height, based on the floor, tucked against the back wall
+  // right beside the bed's measured right edge (tracks the bed automatically)
+  const nightstand = useMemo(() => {
+    const o = nsScene.clone(true);
+    o.rotation.set(0, NIGHTSTAND_ROT_Y, 0);
+    o.scale.setScalar(1);
+    o.updateMatrixWorld(true);
+    const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    o.scale.setScalar(NIGHTSTAND_H / size.y);
+    o.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(o);
+    o.position.set(
+      box.max.x + NIGHTSTAND_GAP - b.min.x, // beside the bed's right edge
+      -HY - b.min.y,                        // base on the floor
+      -HZ + 0.6 - b.min.z,                  // tucked against the back wall
+    );
+    // sharpen its textures at glancing angles, same treatment the room surfaces get —
+    // without this the wood blurs and reads "low quality" next to the bed
+    o.traverse((c) => {
+      const mesh = c as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        const sm = m as THREE.MeshStandardMaterial;
+        for (const t of [sm.map, sm.normalMap, sm.roughnessMap, sm.metalnessMap]) {
+          if (t) { t.anisotropy = 8; t.needsUpdate = true; }
+        }
+      }
+    });
+    return o;
+  }, [nsScene, box]);
   const panel = useMemo(() => {
     const h = box.max.y - box.min.y;          // full bed height; box.min.y rests on the floor
     const topY = box.min.y + h * BED_BACKBOARD_TOP;
@@ -314,6 +385,7 @@ function Bed() {
         <boxGeometry args={panel.args} />
         <meshStandardMaterial color={BED_FRAME_WOOD} roughness={0.7} metalness={0} />
       </mesh>
+      <primitive object={nightstand} />
     </group>
   );
 }
@@ -422,8 +494,9 @@ function GamingPC({
   rotY?: number;
 }) {
   const { scene } = useGLTF(PC_URL);
-  const rgbMats = useRef<THREE.MeshStandardMaterial[]>([]);
-  const node = useMemo(() => {
+  // the memo returns BOTH the placed clone and its rainbow-cycled materials, so the
+  // per-frame loop below reads them straight from the memo (no ref writes in render)
+  const { node, rgbMats } = useMemo(() => {
     const o = scene.clone(true);
     o.rotation.set(0, rotY, 0);
     o.scale.setScalar(1);
@@ -460,15 +533,13 @@ function GamingPC({
       if (!mesh.isMesh) return;
       mesh.material = Array.isArray(mesh.material) ? mesh.material.map(recolor) : recolor(mesh.material);
     });
-    rgbMats.current = found;
-    return o;
+    return { node: o, rgbMats: found };
   }, [scene, targetH, x, z, rotY]);
 
   useFrame((state) => {
     const t = state.clock.elapsedTime * RGB_SPEED;
-    const arr = rgbMats.current;
-    for (let i = 0; i < arr.length; i++) {
-      arr[i].emissive.setHSL((t + i / Math.max(1, arr.length)) % 1, 1, 0.5); // rainbow spread
+    for (let i = 0; i < rgbMats.length; i++) {
+      rgbMats[i].emissive.setHSL((t + i / Math.max(1, rgbMats.length)) % 1, 1, 0.5); // rainbow spread
     }
   });
 
@@ -624,6 +695,61 @@ function DualStand({ spread }: { spread: number }) {
   );
 }
 
+/* procedural mousepad surface: a dark woven cloth with a stitched border + faint
+   monogram, drawn once to a canvas. This is what fixes the "out of place" flat box —
+   it gives the mat real fabric grain at the resolution of the .glb models around it.
+   Cheap (one 1024×420 texture). Module-level like galaxyTexture/earthTexture so the
+   random speckle stays out of component render (react-hooks/purity). */
+function mousepadTexture() {
+  const W = 1024, H = 420;
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const x = c.getContext("2d");
+  if (x) {
+    // base cloth + a soft center sheen
+    x.fillStyle = "#0d0e12";
+    x.fillRect(0, 0, W, H);
+    const rg = x.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, W * 0.6);
+    rg.addColorStop(0, "rgba(46,52,66,0.35)");
+    rg.addColorStop(1, "rgba(0,0,0,0)");
+    x.fillStyle = rg;
+    x.fillRect(0, 0, W, H);
+    // fine diagonal weave (cross-hatch in both directions)
+    x.globalAlpha = 0.05;
+    x.strokeStyle = "#aeb6c4";
+    x.lineWidth = 1;
+    for (let i = -H; i < W; i += 4) {
+      x.beginPath(); x.moveTo(i, 0); x.lineTo(i + H, H); x.stroke();
+      x.beginPath(); x.moveTo(i, H); x.lineTo(i + H, 0); x.stroke();
+    }
+    x.globalAlpha = 1;
+    // speckle grain so the weave isn't perfectly regular
+    for (let i = 0; i < 2400; i++) {
+      x.fillStyle = `rgba(255,255,255,${Math.random() * 0.04})`;
+      x.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+    }
+    // stitched border
+    x.strokeStyle = "rgba(120,130,145,0.5)";
+    x.lineWidth = 3;
+    x.setLineDash([10, 7]);
+    x.strokeRect(14, 14, W - 28, H - 28);
+    x.setLineDash([]);
+    // faint corner monogram
+    x.globalAlpha = 0.1;
+    x.fillStyle = "#cfd6e2";
+    x.font = "bold 58px system-ui, sans-serif";
+    x.textAlign = "right";
+    x.textBaseline = "bottom";
+    x.fillText("FC", W - 40, H - 30);
+    x.globalAlpha = 1;
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
   const px = THREE.MathUtils.lerp(deskBox.min.x, deskBox.max.x, GAMING_ALONG);
   const pz = THREE.MathUtils.lerp(deskBox.min.z, deskBox.max.z, GAMING_DEPTH);
@@ -690,60 +816,8 @@ function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
     return t;
   }, []);
 
-  // procedural mousepad surface: a dark woven cloth with a stitched border + faint
-  // monogram, drawn once to a canvas. This is what fixes the "out of place" flat box —
-  // it gives the mat real fabric grain at the resolution of the .glb models around it.
-  // Cheap (one 1024×420 texture), so it stays inside the WebGL budget (ADR-0011).
-  const matTex = useMemo(() => {
-    const W = 1024, H = 420;
-    const c = document.createElement("canvas");
-    c.width = W;
-    c.height = H;
-    const x = c.getContext("2d");
-    if (x) {
-      // base cloth + a soft center sheen
-      x.fillStyle = "#0d0e12";
-      x.fillRect(0, 0, W, H);
-      const rg = x.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, W * 0.6);
-      rg.addColorStop(0, "rgba(46,52,66,0.35)");
-      rg.addColorStop(1, "rgba(0,0,0,0)");
-      x.fillStyle = rg;
-      x.fillRect(0, 0, W, H);
-      // fine diagonal weave (cross-hatch in both directions)
-      x.globalAlpha = 0.05;
-      x.strokeStyle = "#aeb6c4";
-      x.lineWidth = 1;
-      for (let i = -H; i < W; i += 4) {
-        x.beginPath(); x.moveTo(i, 0); x.lineTo(i + H, H); x.stroke();
-        x.beginPath(); x.moveTo(i, H); x.lineTo(i + H, 0); x.stroke();
-      }
-      x.globalAlpha = 1;
-      // speckle grain so the weave isn't perfectly regular
-      for (let i = 0; i < 2400; i++) {
-        x.fillStyle = `rgba(255,255,255,${Math.random() * 0.04})`;
-        x.fillRect(Math.random() * W, Math.random() * H, 1, 1);
-      }
-      // stitched border
-      x.strokeStyle = "rgba(120,130,145,0.5)";
-      x.lineWidth = 3;
-      x.setLineDash([10, 7]);
-      x.strokeRect(14, 14, W - 28, H - 28);
-      x.setLineDash([]);
-      // faint corner monogram
-      x.globalAlpha = 0.1;
-      x.fillStyle = "#cfd6e2";
-      x.font = "bold 58px system-ui, sans-serif";
-      x.textAlign = "right";
-      x.textBaseline = "bottom";
-      x.fillText("FC", W - 40, H - 30);
-      x.globalAlpha = 1;
-    }
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 8;
-    return t;
-  }, []);
-
+  // procedural mousepad surface (mousepadTexture below, memoized — built once)
+  const matTex = useMemo(() => mousepadTexture(), []);
   // desk mat edge + the wall-wash light, cycled together each frame
   const matGlow = useRef<THREE.MeshStandardMaterial>(null);
   const accent = useRef<THREE.PointLight>(null);
@@ -825,15 +899,18 @@ function Furniture() {
     [deskScene],
   );
   return (
-    <>
+    // every piece of furniture casts + receives: the sun rakes long shadows off the
+    // bed/desk/chair, the fan pools shadows beneath them (ADR-0012)
+    <CastReceive>
       <Bed />
       <primitive object={desk.object} />
       <GamingSetup deskBox={desk.box} />
       <GamingChair deskBox={desk.box} />
-    </>
+    </CastReceive>
   );
 }
 useGLTF.preload(BED_URL);
+useGLTF.preload(NIGHTSTAND_URL);
 useGLTF.preload(DESK_URL);
 useGLTF.preload(PC_URL);
 useGLTF.preload(DESKSET_URL);
@@ -1170,6 +1247,13 @@ function CeilingFan() {
         decay={2}
         intensity={FAN_LIGHT}
         color={FAN_LIGHT_COLOR}
+        castShadow
+        shadow-mapSize={[FAN_SHADOW_MAP, FAN_SHADOW_MAP]}
+        shadow-radius={6}
+        shadow-bias={-0.0002}
+        shadow-normalBias={0.03}
+        shadow-camera-near={0.5}
+        shadow-camera-far={30}
       />
       <pointLight position={[0, -0.85, 0]} intensity={3} distance={0.8} decay={2} color={FAN_LIGHT_COLOR} />
     </group>
@@ -1209,9 +1293,9 @@ function CrownMolding() {
   );
   return (
     <group>
-      <mesh geometry={geos.back} material={mat} position={[0, HY, -HZ]} rotation={[0, -Math.PI / 2, 0]} />
-      <mesh geometry={geos.side} material={mat} position={[-HX, HY, 0]} />
-      <mesh geometry={geos.side} material={mat} position={[HX, HY, 0]} rotation={[0, Math.PI, 0]} />
+      <mesh geometry={geos.back} material={mat} position={[0, HY, -HZ]} rotation={[0, -Math.PI / 2, 0]} receiveShadow />
+      <mesh geometry={geos.side} material={mat} position={[-HX, HY, 0]} receiveShadow />
+      <mesh geometry={geos.side} material={mat} position={[HX, HY, 0]} rotation={[0, Math.PI, 0]} receiveShadow />
     </group>
   );
 }
@@ -1234,13 +1318,18 @@ function Window() {
   // real photograph outside (CC0, Poly Haven "Kloofendal 48d Partly Cloudy" — a window-
   // shaped crop from the tonemapped panorama: blue sky, cumulus, leafy suburb on a hill;
   // see CREDITS.md). Procedural canvas skies were tried and read as a kid's drawing.
-  const view = useTexture("/textures/window-view.jpg");
-  useMemo(() => {
-    view.colorSpace = THREE.SRGBColorSpace;
-    view.wrapS = view.wrapT = THREE.ClampToEdgeWrapping;
-    view.anisotropy = 8;
-    view.needsUpdate = true;
-  }, [view]);
+  const viewSrc = useTexture("/textures/window-view.jpg");
+  // configure a CLONE, not useTexture's cached texture (mutating a shared value during
+  // render trips react-hooks/immutability; the clone shares its GPU upload anyway —
+  // same pattern as surfaceMaps for the room shell)
+  const view = useMemo(() => {
+    const t = viewSrc.clone();
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    t.anisotropy = 8;
+    t.needsUpdate = true;
+    return t;
+  }, [viewSrc]);
   const W = WINDOW_W, H = WINDOW_H;
   const D = 0.32; // reveal depth — how far the jambs run OUT through the wall opening
   const J = 0.09; // jamb board thickness
@@ -1263,6 +1352,11 @@ function Window() {
         <meshStandardMaterial color="#dceaf2" transparent opacity={0.08} roughness={0.08} metalness={0} depthWrite={false} />
       </mesh>
 
+      {/* everything below (jambs → sash lift) casts + receives shadow: with the sun
+          OUTSIDE the window (ADR-0012), the sashes + muntins project the classic
+          sun-through-window grid across the floor. The photo plane + glass above stay
+          OUT of this group — a casting photo plane would eclipse the sun entirely. */}
+      <CastReceive>
       {/* reveal: painted jambs lining the opening OUT through the wall */}
       <mesh position={[-W / 2 - J / 2, 0, -D / 2]}><boxGeometry args={[J, H + 2 * J, D]} />{paint}</mesh>
       <mesh position={[W / 2 + J / 2, 0, -D / 2]}><boxGeometry args={[J, H + 2 * J, D]} />{paint}</mesh>
@@ -1298,13 +1392,25 @@ function Window() {
         <boxGeometry args={[0.3, 0.05, 0.05]} />
         <meshStandardMaterial color="#c9ccd2" roughness={0.3} metalness={0.9} />
       </mesh>
+      </CastReceive>
     </group>
   );
 }
 
-/* Sunlight: a warm beam from the window, raking down across the room's center floor.
-   Its intensity breathes very slowly (like thin clouds drifting past the sun) so the
-   room feels alive. */
+/* Sunlight: a warm beam raking down through the window across the room's center floor.
+   The light sits OUTSIDE the window (ADR-0012) — up, off to the left, past the photo
+   plane — so the back wall's shadow masks the beam into the window's shape and the
+   sashes + muntins project the classic sun-grid onto the floor. decay 0 = no distance
+   falloff (the sun is effectively parallel light), which makes SUN a direct multiplier.
+   Its intensity breathes very slowly (thin clouds drifting past) so the room feels alive.
+   NOTE: the photo plane sits at world z≈-12.2, INSIDE the light's throw — it must never
+   cast shadow or it would eclipse the sun (see the CastReceive note in Window). */
+const SUN_POS: [number, number, number] = [
+  WINDOW_POS[0] - 2.2, // off-axis left → the beam angles across the room
+  WINDOW_POS[1] + 3.4, // high → late-morning rake down onto the floor
+  -HZ - 4,             // well past the wall AND the photo plane
+];
+
 function Sunlight() {
   const light = useRef<THREE.SpotLight>(null);
   const target = useMemo(() => {
@@ -1320,14 +1426,21 @@ function Sunlight() {
       <primitive object={target} />
       <spotLight
         ref={light}
-        position={[WINDOW_POS[0], WINDOW_POS[1], -HZ + 0.4]}
+        position={SUN_POS}
         target={target}
-        angle={0.95}
-        penumbra={0.9}
-        distance={34}
-        decay={1.6}
+        angle={0.7}     // just wide enough to cover the whole window opening from SUN_POS
+        penumbra={0.5}
+        distance={45}
+        decay={0}
         intensity={SUN}
         color="#fff1cf"
+        castShadow
+        shadow-mapSize={[SUN_SHADOW_MAP, SUN_SHADOW_MAP]}
+        shadow-radius={4}
+        shadow-bias={-0.0002}
+        shadow-normalBias={0.02}
+        shadow-camera-near={3}
+        shadow-camera-far={45}
       />
     </>
   );
@@ -1412,15 +1525,15 @@ function Marker({
    ease a focus scalar 0→5 between stops, then ease a 0→1 inspect scalar that
    pulls the camera toward the focused stop's close-up pose. */
 function Rig({
-  targetF,
-  curF,
-  curZoom,
+  targetFRef,
+  curFRef,
+  curZoomRef,
   inspectRef,
   onFocus,
 }: {
-  targetF: React.MutableRefObject<number>;
-  curF: React.MutableRefObject<number>;
-  curZoom: React.MutableRefObject<number>;
+  targetFRef: React.MutableRefObject<number>;
+  curFRef: React.MutableRefObject<number>;
+  curZoomRef: React.MutableRefObject<number>;
   inspectRef: React.MutableRefObject<number | null>;
   onFocus: (i: number) => void;
 }) {
@@ -1441,10 +1554,10 @@ function Rig({
     // The old code stepped at a fixed per-frame rate and then SNAPPED the final fraction to
     // land — a tiny teleport on arrival, plus speed that varied with refresh rate. damp()
     // decelerates smoothly into the stop and behaves identically at 60Hz or 144Hz.
-    if (reduce.current) curF.current = targetF.current;
-    else curF.current = THREE.MathUtils.damp(curF.current, targetF.current, PAN_LAMBDA, dt);
+    if (reduce.current) curFRef.current = targetFRef.current;
+    else curFRef.current = THREE.MathUtils.damp(curFRef.current, targetFRef.current, PAN_LAMBDA, dt);
 
-    const f = Math.max(0, Math.min(N - 1, curF.current));
+    const f = Math.max(0, Math.min(N - 1, curFRef.current));
     const i0 = Math.floor(f);
     const i1 = Math.min(N - 1, i0 + 1);
     const t = f - i0;
@@ -1469,7 +1582,7 @@ function Rig({
     // Settle zoom: rest on the wide room, then pulse IN onto an item on arrival, hold briefly,
     // ease back out. Driven off arrival (settled), so it only zooms onto a real stop.
     const now = performance.now();
-    const settled = Math.abs(targetF.current - curF.current) < 0.001;
+    const settled = Math.abs(targetFRef.current - curFRef.current) < 0.001;
     let arcTarget: number;
     if (settled) {
       if (!wasSettled.current) {
@@ -1487,9 +1600,9 @@ function Rig({
     // click-to-inspect eases the camera the rest of the way in to the close-up pose (0→1);
     // it wins over the pulse (max) so the two never fight.
     const wantZoom = inspectRef.current != null ? 1 : 0;
-    if (reduce.current) curZoom.current = wantZoom;
-    else curZoom.current = THREE.MathUtils.damp(curZoom.current, wantZoom, INSPECT_LAMBDA, dt);
-    const zf = Math.max(curZoom.current, arc);
+    if (reduce.current) curZoomRef.current = wantZoom;
+    else curZoomRef.current = THREE.MathUtils.damp(curZoomRef.current, wantZoom, INSPECT_LAMBDA, dt);
+    const zf = Math.max(curZoomRef.current, arc);
 
     // Everything below is continuous in f and zf, so there are no jumps anywhere in the pan.
     camera.position.set(lerp(bx, cx, zf), lerp(by, cy, zf), lerp(bz, cz, zf));
@@ -1507,9 +1620,9 @@ function Rig({
 }
 
 export type RoomSceneProps = {
-  targetF: React.MutableRefObject<number>;
-  curF: React.MutableRefObject<number>;
-  curZoom: React.MutableRefObject<number>;
+  targetFRef: React.MutableRefObject<number>;
+  curFRef: React.MutableRefObject<number>;
+  curZoomRef: React.MutableRefObject<number>;
   inspectRef: React.MutableRefObject<number | null>;
   focus: number;
   onFocus: (i: number) => void;
@@ -1517,9 +1630,9 @@ export type RoomSceneProps = {
 };
 
 export default function RoomScene({
-  targetF,
-  curF,
-  curZoom,
+  targetFRef,
+  curFRef,
+  curZoomRef,
   inspectRef,
   focus,
   onFocus,
@@ -1527,6 +1640,8 @@ export default function RoomScene({
 }: RoomSceneProps) {
   return (
     <Canvas
+      shadows="percentage" // PCF shadow map; softness comes from each light's shadow-radius
+                           // (three r184 deprecated PCFSoftShadowMap — "soft" just falls back)
       camera={{ position: STOPS[0].pos, fov: 60, near: 0.1, far: 100 }}
       dpr={1}
       gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: EXPOSURE }}
@@ -1534,12 +1649,16 @@ export default function RoomScene({
       <color attach="background" args={["#241c12"]} />
       <fog attach="fog" args={["#241c12", 16, 40]} />
 
-      {/* Two-source lighting, daytime edition: warm sunlight beaming through the window is
-         the key, with the fan's light kit as the warm overhead accent. The ambient/hemi
-         fill is turned up to daylight levels (blue-ish sky above, warm floor bounce below)
-         so the room reads bright without flattening the beam. Tune against a real browser. */}
+      {/* Two-source lighting, daytime edition (ADR-0012): warm sunlight beaming through the
+         window is the key — now shadow-casting, shaped by the wall's window hole — with the
+         fan's light kit as the warm shadow-casting overhead accent. The HDRI environment
+         (same sky as the window view) gives the metals/glossies real reflections and a
+         gentle image-based fill, so ambient/hemi are turned DOWN. Tune in a real browser. */}
       <ambientLight intensity={AMBIENT} color="#fff3dd" />
       <hemisphereLight args={["#cfe2ff", "#6b5138", HEMI]} />
+      <Suspense fallback={null}>
+        <Environment files={ENV_URL} environmentIntensity={ENV_INTENSITY} />
+      </Suspense>
       <Sunlight />
 
       {/* the ceiling fan IS a light fixture — its light kit pools warm light beneath it */}
@@ -1555,13 +1674,28 @@ export default function RoomScene({
 
       <Suspense fallback={null}>
         <Furniture />
+        {/* one-frame contact-shadow bake at floor level: soft ambient-occlusion-style
+           grounding under the furniture where the two key lights don't reach. Mounted
+           in the SAME Suspense as Furniture so the single bake frame runs only after
+           the models exist. far=2.5 keeps the capture near the floor (the spinning fan
+           can't smear a blob into it). */}
+        <ContactShadows
+          position={[0, -HY + 0.01, 0]}
+          scale={[HX * 2, HZ * 2]}
+          far={2.5}
+          blur={2.2}
+          opacity={0.35}
+          frames={1}
+          resolution={512}
+          color="#1a1208"
+        />
       </Suspense>
 
       {STOPS.map((stop, i) => (
         <Marker key={stop.id} stop={stop} active={focus === i} onActivate={() => onActivate(i)} />
       ))}
 
-      <Rig targetF={targetF} curF={curF} curZoom={curZoom} inspectRef={inspectRef} onFocus={onFocus} />
+      <Rig targetFRef={targetFRef} curFRef={curFRef} curZoomRef={curZoomRef} inspectRef={inspectRef} onFocus={onFocus} />
 
       {/* DEV-ONLY FPS/MS meter (top-left). Auto-excluded from the production build via the
           NODE_ENV guard; delete this line entirely for the final product. */}

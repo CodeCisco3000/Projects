@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Git-ignored scratch space (saved reference pages carry their own vendor JS):
+    "Private Random Stuff/**",
   ]),
 ]);
 

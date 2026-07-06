@@ -18,16 +18,17 @@ Third-party assets used in this site, with attribution as required by their lice
   ["Gaming Computer"](https://poly.pizza/m/5cN7W4ufoII) by Alex Safayan,
   licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
 
-- **Keyboard** — `public/models/keyboard/`
-  ["Keyboard"](https://poly.pizza/m/fOy2zvPJAj-) by Alex Safayan,
-  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+- **RGB Keyboard and Mouse** — `public/models/rgb-keyboard-mouse/`
+  ["RGB Keyboard and Mouse"](https://sketchfab.com/3d-models/rgb-keyboard-and-mouse-df00ce3e66dc4b75a5f9b49c2e6b1406) by [Jamesley](https://sketchfab.com/jamesley55),
+  licensed under [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/), via [Sketchfab](https://sketchfab.com).
 
-- **Computer Mouse** — `public/models/mouse/`
-  ["Computer Mouse"](https://poly.pizza/m/V2Ebx3pvo4) by CreativeTrio,
-  licensed under [CC0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain), via [Poly Pizza](https://poly.pizza).
+- **Gaming Chair** — `public/models/gaming-chair/`
+  ["Gaming Chair"](https://sketchfab.com/3d-models/gaming-chair-6ca81f60846648609b4208c9e7f31b14) by [9arts](https://sketchfab.com/9arts),
+  licensed under [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/), via [Sketchfab](https://sketchfab.com).
 
 ## Textures (CC0 — no attribution required, listed for provenance)
 
 - **Walls — painted plaster** (`public/textures/wall-*`): "PaintedPlaster017", [ambientCG](https://ambientcg.com), CC0.
-- **Floor — wood** (`public/textures/floor-*`): "WoodFloor043", [ambientCG](https://ambientcg.com), CC0.
+- **Floor — wood** (`public/textures/floor-*`): "Wood Floor", [Poly Haven](https://polyhaven.com/a/wood_floor), CC0 (2K JPG set; replaced ambientCG "WoodFloor043").
 - **Ceiling — plaster** (`public/textures/ceiling-*`): "Plaster001", [ambientCG](https://ambientcg.com), CC0.
+- **Window view — sky over leafy suburb** (`public/textures/window-view.jpg`): window-shaped crop from the tonemapped panorama of ["Kloofendal 48d Partly Cloudy"](https://polyhaven.com/a/kloofendal_48d_partly_cloudy) by Greg Zaal, [Poly Haven](https://polyhaven.com), CC0. (Cropped + downscaled to 1600px for web performance.)

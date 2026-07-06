@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Galaxy Ceiling Fan — Preview (Hunter Discovery 52298)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14100c; overflow: hidden; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; left: 12px; bottom: 12px; color: #cbb89a;
+    font: 13px/1.5 system-ui, sans-serif; opacity: 0.85; user-select: none;
+  }
+  #hud kbd { background: #2a2118; border-radius: 4px; padding: 1px 6px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hud">drag to orbit &nbsp;•&nbsp; scroll to zoom &nbsp;•&nbsp; <kbd>space</kbd> pause/spin</div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+/* Same fan as RoomScene.tsx's <CeilingFan/>, ported 1:1 to plain three.js so it can be
+   inspected alone. Modeled on the real Hunter Discovery 52298 (48-in brushed nickel;
+   ref photo in Private Random Stuff/References/fan/). Keep tweaks in sync both ways. */
+
+const FAN_SPEED = 1.1;
+const FAN_BLADES = 5;
+const FAN_RADIUS = 3.05;
+const FAN = {
+  chrome: "#d9dee4", // bright nickel: motor housing, brackets, bowl ring, downrod, chains
+  metal: "#b6bcc4",  // brushed nickel: canopy + soft trim
+};
+
+/* ---------- procedural textures (identical to RoomScene.tsx) ---------- */
+function galaxyTexture() {
+  const c = document.createElement("canvas");
+  c.width = 512; c.height = 256;
+  const x = c.getContext("2d");
+  // deep navy starfield base
+  const g = x.createLinearGradient(0, 0, 512, 256);
+  g.addColorStop(0, "#0c1230");
+  g.addColorStop(0.5, "#16255a");
+  g.addColorStop(1, "#0d1638");
+  x.fillStyle = g;
+  x.fillRect(0, 0, 512, 256);
+  // soft nebula clouds (additive) — cool blues/violets only
+  const neb = [["#1e4fae", 0.45], ["#3b7ccc", 0.35], ["#6a3ac0", 0.28]];
+  x.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 14; i++) {
+    const [col, a] = neb[i % neb.length];
+    const cx = Math.random() * 512, cy = Math.random() * 256, r = 40 + Math.random() * 120;
+    const rg = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    rg.addColorStop(0, col);
+    rg.addColorStop(1, "rgba(0,0,0,0)");
+    x.globalAlpha = a * 0.5;
+    x.fillStyle = rg;
+    x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
+  }
+  x.globalAlpha = 1;
+  x.globalCompositeOperation = "source-over";
+  // star field
+  for (let i = 0; i < 420; i++) {
+    x.fillStyle = `rgba(255,255,255,${0.4 + Math.random() * 0.6})`;
+    x.beginPath(); x.arc(Math.random() * 512, Math.random() * 256, Math.random() * 1.2, 0, Math.PI * 2); x.fill();
+  }
+  // a few bright glowing stars, plus a sprinkle of tinted ones (icy blue / warm gold)
+  for (let i = 0; i < 12; i++) {
+    const sx = Math.random() * 512, sy = Math.random() * 256;
+    const rg = x.createRadialGradient(sx, sy, 0, sx, sy, 8);
+    rg.addColorStop(0, "rgba(255,255,255,0.9)");
+    rg.addColorStop(1, "rgba(255,255,255,0)");
+    x.fillStyle = rg;
+    x.beginPath(); x.arc(sx, sy, 8, 0, Math.PI * 2); x.fill();
+  }
+  for (let i = 0; i < 26; i++) {
+    x.fillStyle = i % 2 ? "rgba(190,220,255,0.85)" : "rgba(255,230,190,0.8)";
+    x.beginPath(); x.arc(Math.random() * 512, Math.random() * 256, 0.8 + Math.random() * 1.1, 0, Math.PI * 2); x.fill();
+  }
+  // the rocket's exhaust trail — a wide periwinkle band with a dusty-pink upper edge that
+  // S-curves across the blade from root to tip, ending at the rocket (per Francisco's photos)
+  const trail = (w, col, a, lift) => {
+    x.globalAlpha = a;
+    x.strokeStyle = col;
+    x.lineWidth = w;
+    x.lineCap = "round";
+    x.beginPath();
+    x.moveTo(20, 60 + lift);
+    x.bezierCurveTo(180, 30 + lift, 240, 250 + lift, 424, 118 + lift);
+    x.stroke();
+  };
+  trail(58, "#7e97d8", 0.5, 0);    // the wide band
+  trail(26, "#a8c0f0", 0.55, 6);   // brighter core
+  trail(12, "#d8a0b8", 0.75, -28); // dusty-pink edge stripe
+  x.globalAlpha = 1;
+  // soft blue glow where the trail meets the rocket at the tip
+  const bgl = x.createRadialGradient(430, 118, 0, 430, 118, 46);
+  bgl.addColorStop(0, "rgba(159,208,245,0.4)");
+  bgl.addColorStop(1, "rgba(159,208,245,0)");
+  x.fillStyle = bgl;
+  x.beginPath(); x.arc(430, 118, 46, 0, Math.PI * 2); x.fill();
+  // the little rocket ship at the blade tip (white hull, slate fins, blue flame)
+  x.save();
+  x.translate(430, 118);
+  x.rotate(-0.5);
+  x.fillStyle = "#e8edf4";
+  x.beginPath();
+  x.moveTo(-20, -8); x.lineTo(8, -8);
+  x.quadraticCurveTo(24, 0, 8, 8); x.lineTo(-20, 8);
+  x.quadraticCurveTo(-26, 0, -20, -8); x.closePath(); x.fill();
+  x.fillStyle = "#7f93b8";
+  x.beginPath(); x.moveTo(8, -8); x.quadraticCurveTo(24, 0, 8, 8); x.closePath(); x.fill();
+  x.fillStyle = "#3a4a66";
+  x.beginPath(); x.arc(-4, 0, 4, 0, Math.PI * 2); x.fill();
+  x.fillStyle = "#7f93b8";
+  x.beginPath(); x.moveTo(-20, -8); x.lineTo(-30, -14); x.lineTo(-17, -4); x.closePath(); x.fill();
+  x.beginPath(); x.moveTo(-20, 8); x.lineTo(-30, 14); x.lineTo(-17, 4); x.closePath(); x.fill();
+  x.fillStyle = "rgba(150,200,255,0.9)";
+  x.beginPath(); x.moveTo(-20, -4); x.lineTo(-34, 0); x.lineTo(-20, 4); x.closePath(); x.fill();
+  x.restore();
+  // soft vignette so the blade edges read darker and the art gains depth
+  const vg = x.createRadialGradient(256, 128, 90, 256, 128, 300);
+  vg.addColorStop(0, "rgba(5,8,20,0)");
+  vg.addColorStop(1, "rgba(5,8,20,0.4)");
+  x.fillStyle = vg;
+  x.fillRect(0, 0, 512, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+function earthTexture() {
+  const c = document.createElement("canvas");
+  c.width = 512; c.height = 256;
+  const x = c.getContext("2d");
+  const g = x.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, "#1b6aa8");
+  g.addColorStop(0.5, "#1f7fc0");
+  g.addColorStop(1, "#175a92");
+  x.fillStyle = g;
+  x.fillRect(0, 0, 512, 256);
+  const land = ["#3f8f3a", "#4e9c45", "#7d8a3e", "#b59a5e"];
+  for (let i = 0; i < 22; i++) {
+    x.fillStyle = land[i % land.length];
+    const cx = Math.random() * 512, cy = 40 + Math.random() * 180, n = 6 + Math.floor(Math.random() * 5), rad = 14 + Math.random() * 40;
+    x.beginPath();
+    for (let k = 0; k < n; k++) {
+      const ang = (k / n) * Math.PI * 2, rr = rad * (0.5 + Math.random() * 0.8);
+      const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr * 0.7;
+      if (k) x.lineTo(px, py); else x.moveTo(px, py);
+    }
+    x.closePath(); x.fill();
+  }
+  x.fillStyle = "rgba(240,245,255,0.85)";
+  x.fillRect(0, 0, 512, 14);
+  x.fillRect(0, 244, 512, 12);
+  x.globalAlpha = 0.5;
+  x.fillStyle = "#ffffff";
+  for (let i = 0; i < 26; i++) {
+    x.beginPath(); x.arc(Math.random() * 512, Math.random() * 256, 8 + Math.random() * 22, 0, Math.PI * 2); x.fill();
+  }
+  x.globalAlpha = 1;
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/* ---------- renderer / scene ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#14100c"); // warm dark, close to the room's mood
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; // gives the metal something to reflect
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(3.6, -0.4, 4.2);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, -0.6, 0);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight("#fff2e0", "#3a2f24", 0.5));
+
+/* ---------- fan build (mirrors <CeilingFan/>) ---------- */
+const fan = new THREE.Group();
+scene.add(fan);
+
+const matMetal = new THREE.MeshStandardMaterial({ color: FAN.metal, roughness: 0.35, metalness: 0.9 });
+const matNickel = new THREE.MeshStandardMaterial({ color: FAN.chrome, roughness: 0.26, metalness: 0.95 });
+const matRod = new THREE.MeshStandardMaterial({ color: FAN.chrome, roughness: 0.18, metalness: 1 });
+
+// canopy + downrod
+const canopy = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.27, 0.1, 48), matMetal);
+canopy.position.y = -0.03;
+fan.add(canopy);
+const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 24), matRod);
+rod.position.y = -0.16;
+fan.add(rod);
+
+// brushed-nickel motor housing (lathe)
+const prof = [
+  [0.0, 0.17], [0.27, 0.17], [0.31, 0.13], [0.31, 0.03], [0.34, 0.01],
+  [0.34, -0.05], [0.31, -0.07], [0.31, -0.15], [0.22, -0.2], [0.0, -0.2],
+];
+const housing = new THREE.Mesh(
+  new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 64),
+  matNickel,
+);
+housing.position.y = -0.4;
+fan.add(housing);
+// dark graphite badge band around the housing waist — gives the nickel something to pop off
+const band = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.345, 0.345, 0.05, 64),
+  new THREE.MeshStandardMaterial({ color: "#2a2d33", roughness: 0.5, metalness: 0.3 }),
+);
+band.position.y = -0.42;
+fan.add(band);
+
+// teardrop bracket
+const Lb = 0.6, wb = 0.17;
+const arm = new THREE.Shape();
+arm.moveTo(0.02, -0.075);
+arm.lineTo(Lb - 0.05, -wb * 0.34);
+arm.quadraticCurveTo(Lb, -wb * 0.34, Lb, 0);
+arm.quadraticCurveTo(Lb, wb * 0.34, Lb - 0.05, wb * 0.34);
+arm.lineTo(0.02, 0.075);
+arm.quadraticCurveTo(-0.05, 0, 0.02, -0.075);
+const loop = new THREE.Path();
+loop.absellipse(Lb * 0.54, 0, Lb * 0.32, wb * 0.2, 0, Math.PI * 2, false, 0);
+arm.holes.push(loop);
+const bracketGeo = new THREE.ExtrudeGeometry(arm, {
+  depth: 0.05, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 1, steps: 1,
+});
+bracketGeo.rotateX(-Math.PI / 2);
+bracketGeo.translate(0, -0.025, 0);
+
+// blade — broad almond paddle: pinched root, widest past mid, soft-pointed tip
+const L = FAN_RADIUS - 0.62, wRoot = 0.16, wMax = 0.84;
+const s = new THREE.Shape();
+s.moveTo(0, -wRoot / 2);
+s.bezierCurveTo(L * 0.25, -wMax * 0.42, L * 0.55, -wMax / 2, L * 0.8, -wMax * 0.4);
+s.quadraticCurveTo(L * 0.98, -wMax * 0.16, L, 0);
+s.quadraticCurveTo(L * 0.98, wMax * 0.16, L * 0.8, wMax * 0.4);
+s.bezierCurveTo(L * 0.55, wMax / 2, L * 0.25, wMax * 0.42, 0, wRoot / 2);
+s.closePath();
+const bladeGeo = new THREE.ExtrudeGeometry(s, {
+  depth: 0.06, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 1, steps: 1,
+});
+bladeGeo.rotateX(-Math.PI / 2);
+bladeGeo.translate(0, -0.03, 0);
+bladeGeo.computeBoundingBox();
+const bb = bladeGeo.boundingBox;
+const span = bb.getSize(new THREE.Vector3());
+const p = bladeGeo.attributes.position, uv = bladeGeo.attributes.uv;
+for (let i = 0; i < p.count; i++) {
+  uv.setXY(i, (p.getX(i) - bb.min.x) / span.x, (p.getZ(i) - bb.min.z) / span.z);
+}
+uv.needsUpdate = true;
+
+const galaxy = galaxyTexture();
+const matBlade = new THREE.MeshStandardMaterial({
+  map: galaxy, emissiveMap: galaxy, emissive: 0xffffff, emissiveIntensity: 0.6,
+  roughness: 0.8, metalness: 0.1,
+});
+const matBracket = new THREE.MeshStandardMaterial({ color: FAN.chrome, roughness: 0.24, metalness: 0.97 });
+
+// spinning rotor
+const rotor = new THREE.Group();
+rotor.position.y = -0.42;
+fan.add(rotor);
+const droop = 0.12, pitch = 0.24;
+for (let i = 0; i < FAN_BLADES; i++) {
+  const spoke = new THREE.Group();
+  spoke.rotation.y = (i / FAN_BLADES) * Math.PI * 2;
+  const tilt = new THREE.Group();
+  tilt.rotation.z = -droop;
+  const bracket = new THREE.Mesh(bracketGeo, matBracket);
+  bracket.position.x = 0.16;
+  const blade = new THREE.Mesh(bladeGeo, matBlade);
+  blade.position.set(0.62, -0.02, 0);
+  blade.rotation.x = pitch;
+  tilt.add(bracket, blade);
+  spoke.add(tilt);
+  rotor.add(spoke);
+}
+
+// Earth light kit — a true spherical cap (bottom face of a much larger sphere, smooth
+// curve, not squashed), lit from within; floats with a small gap below the fixture ring
+const fitter = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.53, 0.09, 48), matBracket);
+fitter.position.y = -0.6;
+fan.add(fitter);
+const earth = earthTexture();
+const bowl = new THREE.Mesh(
+  new THREE.SphereGeometry(0.61, 48, 24, 0, Math.PI * 2, Math.PI * 0.72, Math.PI * 0.28),
+  new THREE.MeshStandardMaterial({
+    map: earth, emissiveMap: earth, emissive: 0xffffff, emissiveIntensity: 1.8,
+    roughness: 0.45, metalness: 0, side: THREE.DoubleSide,
+  }),
+);
+bowl.position.y = -0.29;
+fan.add(bowl);
+
+// nickel finial at the bowl's base; two pull chains beside it (star = fan, cylinder = light)
+const chainMat = new THREE.MeshStandardMaterial({ color: FAN.chrome, roughness: 0.3, metalness: 0.9 });
+const pullMat = new THREE.MeshStandardMaterial({ color: FAN.chrome, roughness: 0.25, metalness: 0.95 });
+const finial = new THREE.Mesh(new THREE.SphereGeometry(0.055, 24, 18), pullMat);
+finial.position.y = -0.93;
+fan.add(finial);
+
+const starSh = new THREE.Shape();
+for (let i = 0; i < 10; i++) {
+  const r = i % 2 ? 0.03 : 0.07;
+  const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+  const px = Math.cos(a) * r, py = Math.sin(a) * r;
+  if (i) starSh.lineTo(px, py); else starSh.moveTo(px, py);
+}
+starSh.closePath();
+const starGeo = new THREE.ExtrudeGeometry(starSh, { depth: 0.015, bevelEnabled: false });
+starGeo.center();
+const pull1 = new THREE.Group();
+pull1.position.set(0.09, -0.9, 0.04);
+const c1 = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.48, 8), chainMat);
+c1.position.y = -0.24;
+const star = new THREE.Mesh(starGeo, new THREE.MeshStandardMaterial({ color: FAN.metal, roughness: 0.4, metalness: 0.6 }));
+star.position.y = -0.51;
+pull1.add(c1, star);
+fan.add(pull1);
+
+const pull2 = new THREE.Group();
+pull2.position.set(-0.07, -0.9, -0.05);
+const c2 = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.3, 8), chainMat);
+c2.position.y = -0.15;
+const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.06, 12), pullMat);
+cyl.position.y = -0.33;
+pull2.add(c2, cyl);
+fan.add(pull2);
+
+// warm bulb inside the bowl — a cone thrown DOWN from the globe (matches RoomScene: the
+// pool lands under the fan, not on the ceiling above it) + a short glow for the nickel ring
+const bulb = new THREE.SpotLight("#ffd9a8", 42, 30, 1.15, 0.9, 2);
+bulb.position.y = -0.76;
+bulb.target.position.set(0, -10, 0);
+fan.add(bulb, bulb.target);
+const bulbGlow = new THREE.PointLight("#ffd9a8", 3, 0.8, 2);
+bulbGlow.position.y = -0.85;
+fan.add(bulbGlow);
+
+/* ---------- loop ---------- */
+let spinning = true;
+addEventListener("keydown", (e) => { if (e.code === "Space") spinning = !spinning; });
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  if (spinning) rotor.rotation.y += FAN_SPEED * dt;
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

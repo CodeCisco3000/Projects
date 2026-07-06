@@ -47,7 +47,7 @@ export const STOPS: Stop[] = [
   { id: "about",       wall: "left",  pos: [ 3.0, 2.2, 11.5], look: [-9.6, 0.1, -1.5], close: [-5.0, 0.3, -1.5] },
   // back wall, swept left → right; camera slides toward center
   { id: "education",   wall: "back",  pos: [ 1.6, 2.2, 11.8], look: [-5.4, 0.2, -8.8], close: [-5.4, 0.5, -3.8] },
-  { id: "experience",  wall: "back",  pos: [ 0.0, 2.2, 12.0], look: [-0.2, 0.2, -8.8], close: [-0.2, 0.5, -3.8] },
+  { id: "experience",  wall: "back",  pos: [-0.8, 2.2, 11.9], look: [ 2.4, 0.2, -8.8], close: [ 2.4, 0.5, -3.8] },
   { id: "skills",      wall: "back",  pos: [-1.6, 2.2, 11.8], look: [ 4.8, 0.2, -8.8], close: [ 4.8, 0.5, -3.8] },
   // right wall — camera sits front-left and looks across the room at it
   { id: "involvement", wall: "right", pos: [-3.0, 2.2, 11.5], look: [ 9.6, 0.1, -2.8], close: [ 5.0, 0.3, -2.8] },

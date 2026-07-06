@@ -17,7 +17,7 @@
 
 import { Suspense, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { useGLTF, useTexture } from "@react-three/drei";
+import { useGLTF, useTexture, Stats } from "@react-three/drei";
 import * as THREE from "three";
 import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
 
@@ -35,11 +35,13 @@ const HZ = 9;
    SETTLE_FALLOFF is how close to a stop (in stop-units) the zoom kicks in. */
 const SETTLE_ZOOM = 0.6;  // how far the camera zooms IN onto an item during its pulse
                           // (1 = all the way to the close-up; lower = a gentler peek)
-const PAN_SPEED = 0.028;  // stops moved per frame — caps how fast the camera travels
-                          // between items, so panning never rushes
+const PAN_LAMBDA = 7.2;   // pan smoothing rate — exponential & frame-rate-independent, so the
+                          // camera eases INTO each stop with no snap (this is what kills the
+                          // old arrival stutter). Higher = snappier arrival, lower = floatier.
 const HOLD_MS = 1400;     // how long it dwells zoomed-in on an item before easing back
                           // out to the wide room
-const ZOOM_EASE = 0.07;   // how gently the zoom pulses in/out (lower = smoother/slower)
+const ZOOM_LAMBDA = 4.0;  // settle-zoom pulse smoothing rate (higher = snappier in/out)
+const INSPECT_LAMBDA = 8.0; // click-to-inspect dolly smoothing rate
 
 const COLOR = {
   back: "#c9b596",   // warm greige paint
@@ -60,10 +62,26 @@ const COLOR = {
    localhost is then a one-number edit. Kept inside the calm WebGL budget
    (ADR-0011): a few analytic lights, no shadows/env maps yet. */
 const EXPOSURE = 0.98; // global brightness, rolled off by ACES tone mapping
-const AMBIENT = 0.15;  // flat fill so nothing crushes to pure black
-const HEMI = 0.64;     // sky/ground fill — even, clip-safe, does most of the work
-const KEY = 0.7;       // directional "sun" — rakes the walls so the relief reads
-const LAMP = 9;        // warm point light = the lamp glow (falls off 1/d²)
+const AMBIENT = 0.14;  // daylight fill so the whole room reads bright, not just the beam
+const HEMI = 0.45;     // sky/bounce fill for the daytime look — sun + fan still shape the room
+const SUN = 55;        // warm sunlight beaming through the window (the daytime key)
+
+/* ---------- ceiling fan (overhead fixture + a bit of personality) ----------
+   A 5-blade fan with a warm light kit, hung from the ceiling center on a downrod. Its light
+   kit is the room's main overhead source; the blades lazily spin (FAN_SPEED). Procedural so
+   it stays inside the WebGL budget (ADR-0011) — no extra .glb, no shadow maps yet. */
+const FAN_POS: [number, number, number] = [0, HY, -1]; // ceiling mount point
+const FAN_SPEED = 1.1;             // blade spin (radians/sec); 0 = still
+const FAN_BLADES = 5;              // blade count
+const FAN_RADIUS = 3.05;           // blade-tip reach from center (long blades, like the real fan)
+const FAN_LIGHT = 42;              // light-kit brightness (thrown DOWN from the Earth globe)
+const FAN_LIGHT_COLOR = "#ffd9a8"; // warm bulb tone
+const FAN = {
+  chrome: "#d9dee4", // bright nickel: motor housing, brackets, bowl ring, downrod, chains
+  metal: "#b6bcc4",  // brushed nickel: canopy + soft trim
+  blade: "#0b1230",  // deep-space base (the galaxy texture paints over this)
+  globe: "#1f7fc0",  // ocean base (the Earth texture paints over this)
+};
 
 /* a marker faces into the room depending on which wall it hangs on */
 const WALL_ROT_Y: Record<Wall, number> = {
@@ -153,11 +171,32 @@ function Walls() {
   }, [t.wallColor, t.wallNormal, t.wallRough, t.floorColor, t.floorNormal, t.floorRough,
       t.ceilColor, t.ceilNormal, t.ceilRough, maxAniso]);
 
+  /* The back wall gets a REAL hole cut where the window sits, so the outside view lives
+     BEHIND the wall with true depth/parallax (a photo glued onto the glass plane read as
+     a flat poster). ShapeGeometry emits UVs in shape units, so remap them to 0..1 for the
+     shared plaster tiling to apply at the same scale as the other walls. */
+  const backWallGeo = useMemo(() => {
+    const s = new THREE.Shape();
+    s.moveTo(-HX, -HY); s.lineTo(HX, -HY); s.lineTo(HX, HY); s.lineTo(-HX, HY); s.closePath();
+    const cx = WINDOW_POS[0], cy = WINDOW_POS[1]; // back wall is unrotated: local xy = world xy
+    const hole = new THREE.Path();
+    hole.moveTo(cx - WINDOW_W / 2, cy - WINDOW_H / 2);
+    hole.lineTo(cx + WINDOW_W / 2, cy - WINDOW_H / 2);
+    hole.lineTo(cx + WINDOW_W / 2, cy + WINDOW_H / 2);
+    hole.lineTo(cx - WINDOW_W / 2, cy + WINDOW_H / 2);
+    hole.closePath();
+    s.holes.push(hole);
+    const g = new THREE.ShapeGeometry(s);
+    const p = g.attributes.position, uv = g.attributes.uv;
+    for (let i = 0; i < p.count; i++) uv.setXY(i, (p.getX(i) + HX) / (2 * HX), (p.getY(i) + HY) / (2 * HY));
+    uv.needsUpdate = true;
+    return g;
+  }, []);
+
   return (
     <group>
-      {/* back wall */}
-      <mesh position={[0, 0, -HZ]}>
-        <planeGeometry args={[HX * 2, HY * 2]} />
+      {/* back wall — carries the cut-out window opening */}
+      <mesh position={[0, 0, -HZ]} geometry={backWallGeo}>
         <meshStandardMaterial {...m.back} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.DoubleSide} />
       </mesh>
       {/* left wall (shares the plaster maps + tiling with the right wall) */}
@@ -191,21 +230,31 @@ function Walls() {
    + WebGL context survival are already confirmed (ADR-0011), so it's safe to keep
    adding pieces.
 
-   CornerModel auto-fits a model instead of hand-guessing scale/origin: it
+   fitCorner (below) auto-fits a model instead of hand-guessing scale/origin: it
    measures the loaded mesh's bounding box, scales it to a real-world `target`
    footprint (world units), drops its base onto the floor, and tucks it against
-   two walls (a corner). That makes placement deterministic even though Kenney's
+   two walls (a corner). That makes placement deterministic even though the models'
    native units/origins are unknown. `rotY` just spins which way it faces. */
 const BED_URL = "/models/messy-bed/scene.gltf";  // CC-BY, thethieme — see CREDITS.md
 const BED_TARGET = 8;   // longest footprint (incl. backboard + nightstands), world units
 const BED_ROT_Y = 0;    // spin in 90° steps if the headboard faces the wrong wall
+
+/* The Nordli's headboard/shelves float (they sit at ~y0.44–0.95 of the model with open
+   air beneath — the mattress + draped comforter ground the bed's sides, but nothing
+   grounds the head). A procedural backing panel fills floor→shelves-top at the head end
+   so the backboard reads as a real bedframe. Fraction measured from the .glb (the shelves
+   top at 0.95 of the model's 1.16 height); the color is sampled from the frame's dark
+   stained-wood texture so the panel matches. Tune against localhost. */
+const BED_FRAME_WOOD = "#2e2a24";  // dark stained wood (sampled from Nordli_Frame texture)
+const BED_BACKBOARD_TOP = 0.82;    // headboard top as a fraction of the bed's full height
+const BED_BACKBOARD_THICK = 0.35;  // backing-panel thickness, world units (kills the see-through)
 
 const DESK_URL = "/models/desk/scene.gltf"; // CC-BY, Superenforcer_xp — see CREDITS.md
 const DESK_TARGET = 7;  // longest footprint of the L-desk, world units
 const DESK_ROT_Y = -Math.PI / 2; // long arm of the L along the back wall, flipped to
                                  // face the room side correctly (270°)
 
-/* fitCorner: the deterministic corner-placement math (shared by CornerModel and
+/* fitCorner: the deterministic corner-placement math (shared by the Bed, the desk, and
    the gaming setup). Measures the loaded mesh, scales it to a real-world `target`
    footprint, drops its base onto the floor, tucks it against two walls, then
    returns BOTH the placed object AND its final world-space bounding box — so other
@@ -235,27 +284,38 @@ function fitCorner(
   return { object: o, box };
 }
 
-function CornerModel({
-  url,
-  target,
-  cornerX,
-  cornerZ,
-  margin = 0.6,
-  rotY = 0,
-}: {
-  url: string;
-  target: number;
-  cornerX: 1 | -1; // -1 = left wall, +1 = right wall
-  cornerZ: 1 | -1; // -1 = back wall, +1 = front (opening)
-  margin?: number;
-  rotY?: number;
-}) {
-  const { scene } = useGLTF(url);
-  const node = useMemo(
-    () => fitCorner(scene, target, cornerX, cornerZ, margin, rotY).object,
-    [scene, target, cornerX, cornerZ, margin, rotY],
+/* The bed: corner-fit like any other model, plus a procedural headboard backing panel
+   that grounds the floating shelves (see the BED_BACKBOARD_* notes). The panel spans the
+   bed's width at the head (back) edge and rises from the floor to the shelves' top, so the
+   lower part tucks behind the mattress/comforter and only the headboard reads above it. */
+function Bed() {
+  const { scene } = useGLTF(BED_URL);
+  const { object, box } = useMemo(
+    () => fitCorner(scene, BED_TARGET, -1, -1, 0.6, BED_ROT_Y),
+    [scene],
   );
-  return <primitive object={node} />;
+  const panel = useMemo(() => {
+    const h = box.max.y - box.min.y;          // full bed height; box.min.y rests on the floor
+    const topY = box.min.y + h * BED_BACKBOARD_TOP;
+    return {
+      args: [(box.max.x - box.min.x) * 0.97, topY - box.min.y, BED_BACKBOARD_THICK] as
+        [number, number, number],
+      pos: [
+        (box.min.x + box.max.x) / 2,
+        (box.min.y + topY) / 2,
+        box.min.z + BED_BACKBOARD_THICK / 2,  // tuck against the bed's head (back) edge
+      ] as [number, number, number],
+    };
+  }, [box]);
+  return (
+    <group>
+      <primitive object={object} />
+      <mesh position={panel.pos}>
+        <boxGeometry args={panel.args} />
+        <meshStandardMaterial color={BED_FRAME_WOOD} roughness={0.7} metalness={0} />
+      </mesh>
+    </group>
+  );
 }
 
 /* ---------- the gaming setup (procedural) ----------
@@ -278,16 +338,45 @@ const GAMING_DEPTH = 0.26;
 const GAMING_ROT_Y = 0;
 const GAMING_SCALE = 1.0;
 const SCREEN_GLOW = 3.0;
+const MONITOR_SPREAD = 1.25; // half the gap between the two monitors (center offset, world units)
+const MONITOR_TOE = 0.18;    // inward toe-in angle so both face the chair (radians)
 const PC_URL = "/models/gaming-pc/gaming-computer.glb"; // CC-BY, Alex Safayan — see CREDITS.md
 const TOWER_HEIGHT = 2.2;  // case height in world units (~a mid-tower)
 const TOWER_ROT_Y = Math.PI / 2; // quarter-turn so the PC's front faces the camera (room, +Z)
-const TOWER_GAP = 1.5;     // how far the tower stands to the room-side of the desk
+const TOWER_GAP = 0.8;     // how far the tower stands to the room-side of the desk
 const TOWER_DEPTH = 0.32;  // 0→1 where along the desk's depth the tower stands
 
 /* RGB lighting: the PC's fans/internals + the desk underglow slowly cycle through
    the rainbow. SPEED = hue turns per second (lower = calmer); GLOW = brightness. */
 const RGB_SPEED = 0.05;
 const RGB_GLOW = 0.85;
+
+/* Keyboard + mouse: one downloaded "RGB Keyboard and Mouse" model (Jamesley, CC-BY-4.0 —
+   see CREDITS.md). The keyboard's RGB is baked into its emissive textures, so it glows on
+   its own (no recolor/cycle needed). The artist parked the mouse inline behind the keyboard,
+   which isn't a natural desk layout, so DeskSet splits the model by mesh name and places each
+   piece on its own. Knobs below; tune against localhost (the preview can't show WebGL). */
+const DESKSET_URL = "/models/rgb-keyboard-mouse/scene-opt.glb"; // CC-BY-4.0, Jamesley — see CREDITS.md
+                    // (welded + simplified to ~50% tris at 1% error — gltf-transform; source in Private)
+const KEYBOARD_W = 1.7;                          // keyboard width on the desk (world units)
+const KEYBOARD_POS: [number, number] = [-0.18, 0.42]; // [x, z] on the desk mat
+const KEYBOARD_ROT = 0;                          // facing; flip to Math.PI if the keys face away
+const MOUSE_W = 0.36;                            // mouse length on the desk (world units)
+const MOUSE_POS: [number, number] = [0.95, 0.4]; // [x, z] on the desk mat
+const MOUSE_ROT = 0;                             // facing; flip if the buttons point the wrong way
+
+/* ---------- the gaming chair (downloaded .glb) ----------
+   A real racing-style gaming chair (9arts, CC-BY-4.0 — see CREDITS.md), parked in front of
+   the desk facing the monitors. Auto-scaled to CHAIR_HEIGHT and dropped onto the floor like
+   the PC tower; its black + red materials already match the rig, so no recolor. It's a
+   SketchUp export with a deep node hierarchy, so the runtime fit measures the real world
+   bounding box rather than trusting raw mesh coords. Facing can't be read cleanly off the
+   mesh, so CHAIR_ROT_Y is the knob to flip if it doesn't face the screens — eyeball localhost. */
+const CHAIR_URL = "/models/gaming-chair/scene.gltf"; // CC-BY-4.0, 9arts — see CREDITS.md
+const CHAIR_HEIGHT = 4.8;     // chair total height, world units (main size knob; tune to desk)
+const CHAIR_ALONG = 0.5;      // 0→1 across the desk width — aligns the chair with the screens
+const CHAIR_GAP = 1.2;        // how far the chair sits out (room-side) from the desk's edge
+const CHAIR_ROT_Y = Math.PI;  // facing; flip toward 0 or ±π/2 if it doesn't face the screens
 
 const GAMING = {
   frame: "#15171c",      // matte dark chassis (bezel, keyboard, case)
@@ -386,6 +475,155 @@ function GamingPC({
   return <primitive object={node} />;
 }
 
+/* DeskSet: the downloaded "RGB Keyboard and Mouse" model, split into its two pieces so each
+   can sit where a real desk would put them (keyboard centered, mouse off to the right) — the
+   artist parked the mouse inline behind the keyboard. pickDeskItem clones the meshes whose
+   name matches `re` (baking each one's full world transform so the Sketchfab Y-up hierarchy
+   survives — and naturally dropping the model's stray Camera/Light nodes, which aren't
+   meshes), scales the group so its footprint = `targetW`, drops its base to the desk surface
+   (local y=0), and centers it at [x, z]. The keyboard's RGB rides along in its emissive map. */
+function pickDeskItem(
+  scene: THREE.Object3D,
+  re: RegExp,
+  targetW: number,
+  x: number,
+  z: number,
+  rotY: number,
+) {
+  const g = new THREE.Group();
+  scene.updateMatrixWorld(true);
+  scene.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !re.test(m.name)) return;
+    const c = m.clone();
+    c.matrix.copy(m.matrixWorld);                          // bake the full ancestor transform...
+    c.matrix.decompose(c.position, c.quaternion, c.scale); // ...into the clone's own TRS
+    g.add(c);
+  });
+  g.rotation.set(0, rotY, 0);
+  g.updateMatrixWorld(true);
+  const size = new THREE.Box3().setFromObject(g).getSize(new THREE.Vector3());
+  g.scale.setScalar(targetW / Math.max(size.x, size.z));
+  g.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(g);
+  const cx = (box.min.x + box.max.x) / 2;
+  const cz = (box.min.z + box.max.z) / 2;
+  g.position.set(x - cx, -box.min.y, z - cz); // center on [x, z], base on the desk
+  return g;
+}
+
+function DeskSet() {
+  const { scene } = useGLTF(DESKSET_URL);
+  const { kb, mouse } = useMemo(
+    () => ({
+      kb: pickDeskItem(scene, /Keyboard/i, KEYBOARD_W, KEYBOARD_POS[0], KEYBOARD_POS[1], KEYBOARD_ROT),
+      mouse: pickDeskItem(scene, /Mouse/i, MOUSE_W, MOUSE_POS[0], MOUSE_POS[1], MOUSE_ROT),
+    }),
+    [scene],
+  );
+  return (
+    <>
+      <primitive object={kb} />
+      <primitive object={mouse} />
+    </>
+  );
+}
+
+/* MonitorWiring: a few dark cables draping from the monitor backs down behind the
+   stand — the "cable management" look. Built as tube geometry along smooth curves. */
+function MonitorWiring({ spread }: { spread: number }) {
+  const geoms = useMemo(() => {
+    const tube = (pts: number[][]) =>
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2]))),
+        28, 0.02, 6, false,
+      );
+    return [
+      tube([[-spread, 1.05, -0.45], [-spread * 0.7, 0.5, -0.56], [-0.15, 0.1, -0.55], [-0.08, 0.04, -0.5]]),
+      tube([[spread, 1.0, -0.45], [spread * 0.7, 0.55, -0.56], [0.15, 0.1, -0.55], [0.06, 0.04, -0.5]]),
+      tube([[0, 0.12, -0.5], [-0.12, 0.05, -0.62], [-0.3, 0.03, -0.72], [-0.5, 0.03, -0.8]]),
+    ];
+  }, [spread]);
+  return (
+    <group>
+      {geoms.map((g, i) => (
+        <mesh key={i} geometry={g}>
+          <meshStandardMaterial color="#0b0c0f" roughness={0.85} metalness={0.1} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/* one monitor HEAD (no foot of its own — it hangs off the shared DualStand). The
+   slightly back-tilted head carries the lit screen + a VESA stub on its back that
+   meets the stand arm. `x` offsets it across the desk; `rotY` toes it inward. */
+function Monitor({ x, rotY, tex }: { x: number; rotY: number; tex: THREE.Texture }) {
+  return (
+    <group position={[x, 0, -0.3]} rotation={[0, rotY, 0]}>
+      <group position={[0, 1.16, 0]} rotation={[-0.05, 0, 0]}>
+        {/* back shell */}
+        <mesh position={[0, 0, -0.05]}>
+          <boxGeometry args={[2.36, 1.34, 0.07]} />
+          <meshStandardMaterial color={GAMING.frame} roughness={0.5} metalness={0.4} />
+        </mesh>
+        {/* slim front frame */}
+        <mesh position={[0, 0, 0]}>
+          <boxGeometry args={[2.42, 1.4, 0.04]} />
+          <meshStandardMaterial color={GAMING.matte} roughness={0.6} />
+        </mesh>
+        {/* the lit screen */}
+        <mesh position={[0, 0.03, 0.025]}>
+          <planeGeometry args={[2.26, 1.22]} />
+          <meshStandardMaterial map={tex} emissive="#ffffff" emissiveMap={tex} emissiveIntensity={0.6} roughness={0.3} metalness={0} />
+        </mesh>
+        {/* brand dot on the chin */}
+        <mesh position={[0, -0.63, 0.03]}>
+          <boxGeometry args={[0.07, 0.025, 0.012]} />
+          <meshStandardMaterial color={GAMING.metal} roughness={0.3} metalness={0.8} />
+        </mesh>
+        {/* VESA mount stub that meets the stand arm */}
+        <mesh position={[0, 0, -0.12]}>
+          <boxGeometry args={[0.18, 0.18, 0.12]} />
+          <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.6} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+/* a single dual-monitor desk stand: weighted base, center pole, and a crossbar
+   with two short forward arms the monitor heads mount onto. `spread` matches the
+   monitors' center offset so the arms line up. */
+function DualStand({ spread }: { spread: number }) {
+  return (
+    <group position={[0, 0, -0.3]}>
+      {/* weighted base on the desk */}
+      <mesh position={[0, 0.03, -0.16]}>
+        <boxGeometry args={[0.52, 0.06, 0.4]} />
+        <meshStandardMaterial color={GAMING.frame} roughness={0.5} metalness={0.5} />
+      </mesh>
+      {/* center pole */}
+      <mesh position={[0, 0.62, -0.24]}>
+        <cylinderGeometry args={[0.05, 0.06, 1.24, 20]} />
+        <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.7} />
+      </mesh>
+      {/* crossbar the heads hang from */}
+      <mesh position={[0, 1.16, -0.24]}>
+        <boxGeometry args={[2 * spread + 0.3, 0.07, 0.07]} />
+        <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.7} />
+      </mesh>
+      {/* short arms reaching forward to each monitor's VESA stub */}
+      {[-spread, spread].map((sx, i) => (
+        <mesh key={i} position={[sx, 1.16, -0.15]}>
+          <boxGeometry args={[0.08, 0.08, 0.22]} />
+          <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.6} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
   const px = THREE.MathUtils.lerp(deskBox.min.x, deskBox.max.x, GAMING_ALONG);
   const pz = THREE.MathUtils.lerp(deskBox.min.z, deskBox.max.z, GAMING_DEPTH);
@@ -452,17 +690,67 @@ function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
     return t;
   }, []);
 
-  // desk-side RGB surfaces + accent light, all cycled together each frame
-  const keyGlow = useRef<THREE.MeshStandardMaterial>(null);
+  // procedural mousepad surface: a dark woven cloth with a stitched border + faint
+  // monogram, drawn once to a canvas. This is what fixes the "out of place" flat box —
+  // it gives the mat real fabric grain at the resolution of the .glb models around it.
+  // Cheap (one 1024×420 texture), so it stays inside the WebGL budget (ADR-0011).
+  const matTex = useMemo(() => {
+    const W = 1024, H = 420;
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const x = c.getContext("2d");
+    if (x) {
+      // base cloth + a soft center sheen
+      x.fillStyle = "#0d0e12";
+      x.fillRect(0, 0, W, H);
+      const rg = x.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, W * 0.6);
+      rg.addColorStop(0, "rgba(46,52,66,0.35)");
+      rg.addColorStop(1, "rgba(0,0,0,0)");
+      x.fillStyle = rg;
+      x.fillRect(0, 0, W, H);
+      // fine diagonal weave (cross-hatch in both directions)
+      x.globalAlpha = 0.05;
+      x.strokeStyle = "#aeb6c4";
+      x.lineWidth = 1;
+      for (let i = -H; i < W; i += 4) {
+        x.beginPath(); x.moveTo(i, 0); x.lineTo(i + H, H); x.stroke();
+        x.beginPath(); x.moveTo(i, H); x.lineTo(i + H, 0); x.stroke();
+      }
+      x.globalAlpha = 1;
+      // speckle grain so the weave isn't perfectly regular
+      for (let i = 0; i < 2400; i++) {
+        x.fillStyle = `rgba(255,255,255,${Math.random() * 0.04})`;
+        x.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+      }
+      // stitched border
+      x.strokeStyle = "rgba(120,130,145,0.5)";
+      x.lineWidth = 3;
+      x.setLineDash([10, 7]);
+      x.strokeRect(14, 14, W - 28, H - 28);
+      x.setLineDash([]);
+      // faint corner monogram
+      x.globalAlpha = 0.1;
+      x.fillStyle = "#cfd6e2";
+      x.font = "bold 58px system-ui, sans-serif";
+      x.textAlign = "right";
+      x.textBaseline = "bottom";
+      x.fillText("FC", W - 40, H - 30);
+      x.globalAlpha = 1;
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    return t;
+  }, []);
+
+  // desk mat edge + the wall-wash light, cycled together each frame
   const matGlow = useRef<THREE.MeshStandardMaterial>(null);
-  const strip = useRef<THREE.MeshStandardMaterial>(null);
   const accent = useRef<THREE.PointLight>(null);
   const col = useMemo(() => new THREE.Color(), []);
   useFrame((state) => {
     const t = state.clock.elapsedTime * RGB_SPEED;
     if (matGlow.current) matGlow.current.emissive.copy(col.setHSL(t % 1, 1, 0.5));
-    if (keyGlow.current) keyGlow.current.emissive.copy(col.setHSL((t + 0.33) % 1, 1, 0.5));
-    if (strip.current) strip.current.emissive.copy(col.setHSL((t + 0.5) % 1, 1, 0.5));
     if (accent.current) accent.current.color.copy(col.setHSL((t + 0.5) % 1, 1, 0.5));
   });
 
@@ -476,76 +764,58 @@ function GamingSetup({ deskBox }: { deskBox: THREE.Box3 }) {
         </mesh>
         <mesh position={[0, 0.025, 0.35]}>
           <boxGeometry args={[2.55, 0.02, 1.05]} />
-          <meshStandardMaterial color={GAMING.matte} roughness={0.85} />
+          <meshStandardMaterial map={matTex} roughness={0.92} metalness={0} />
         </mesh>
 
-        {/* monitor (faces +Z): flared base, slim neck, slightly tilted head whose
-            screen is the drawn "on" texture (albedo + emissive) */}
-        <group position={[0, 0, -0.3]}>
-          <mesh position={[0, 0.02, 0.02]}>
-            <cylinderGeometry args={[0.32, 0.42, 0.04, 36]} />
-            <meshStandardMaterial color={GAMING.metal} roughness={0.35} metalness={0.7} />
-          </mesh>
-          <mesh position={[0, 0.42, -0.05]} rotation={[0.07, 0, 0]}>
-            <boxGeometry args={[0.1, 0.82, 0.08]} />
-            <meshStandardMaterial color={GAMING.metal} roughness={0.4} metalness={0.6} />
-          </mesh>
-          <group position={[0, 1.16, 0]} rotation={[-0.05, 0, 0]}>
-            {/* back shell */}
-            <mesh position={[0, 0, -0.05]}>
-              <boxGeometry args={[2.36, 1.34, 0.07]} />
-              <meshStandardMaterial color={GAMING.frame} roughness={0.5} metalness={0.4} />
-            </mesh>
-            {/* slim front frame */}
-            <mesh position={[0, 0, 0]}>
-              <boxGeometry args={[2.42, 1.4, 0.04]} />
-              <meshStandardMaterial color={GAMING.matte} roughness={0.6} />
-            </mesh>
-            {/* the lit screen */}
-            <mesh position={[0, 0.03, 0.025]}>
-              <planeGeometry args={[2.26, 1.22]} />
-              <meshStandardMaterial map={screenTex} emissive="#ffffff" emissiveMap={screenTex} emissiveIntensity={0.6} roughness={0.3} metalness={0} />
-            </mesh>
-            {/* brand dot on the chin */}
-            <mesh position={[0, -0.63, 0.03]}>
-              <boxGeometry args={[0.07, 0.025, 0.012]} />
-              <meshStandardMaterial color={GAMING.metal} roughness={0.3} metalness={0.8} />
-            </mesh>
-          </group>
-        </group>
+        {/* dual monitors on one shared arm stand, toed inward toward the chair */}
+        <DualStand spread={MONITOR_SPREAD} />
+        <Monitor x={-MONITOR_SPREAD} rotY={MONITOR_TOE} tex={screenTex} />
+        <Monitor x={MONITOR_SPREAD} rotY={-MONITOR_TOE} tex={screenTex} />
 
-        {/* keyboard over an RGB underglow strip */}
-        <mesh position={[-0.18, 0.05, 0.42]}>
-          <boxGeometry args={[1.65, 0.07, 0.46]} />
-          <meshStandardMaterial color={GAMING.frame} roughness={0.7} />
-        </mesh>
-        <mesh position={[-0.18, 0.022, 0.42]}>
-          <boxGeometry args={[1.72, 0.03, 0.5]} />
-          <meshStandardMaterial ref={keyGlow} color={GAMING.matte} emissive={GAMING.rgbA} emissiveIntensity={1.1} roughness={0.5} />
-        </mesh>
+        {/* downloaded RGB keyboard + mouse (split from one model, placed independently) */}
+        <DeskSet />
 
-        {/* mouse */}
-        <mesh position={[0.95, 0.05, 0.4]}>
-          <boxGeometry args={[0.22, 0.08, 0.33]} />
-          <meshStandardMaterial color={GAMING.frame} emissive={GAMING.rgbA} emissiveIntensity={0.4} roughness={0.5} />
-        </mesh>
+        {/* cable management draping behind the monitors */}
+        <MonitorWiring spread={MONITOR_SPREAD} />
 
         {/* the monitor lighting the desk — one calm point light (ADR-0011 budget) */}
         {SCREEN_GLOW > 0 && (
           <pointLight position={[0, 1.0, 0.6]} intensity={SCREEN_GLOW} distance={6} decay={2} color={GAMING.screenGlow} />
         )}
 
-        {/* RGB bias strip behind the monitor + a colored wall-wash light (both cycle) */}
-        <mesh position={[0, 1.05, -0.46]}>
-          <boxGeometry args={[2.1, 0.09, 0.04]} />
-          <meshStandardMaterial ref={strip} color={GAMING.matte} emissive={GAMING.rgbA} emissiveIntensity={RGB_GLOW} roughness={0.5} />
-        </mesh>
+        {/* a colored wall-wash light behind the monitors (cycles; no visible strip) */}
         <pointLight ref={accent} position={[0, 1.1, -0.55]} intensity={2.4} distance={6} decay={2} color={GAMING.rgbA} />
       </group>
 
       <GamingPC targetH={TOWER_HEIGHT} x={tx} z={tz} rotY={TOWER_ROT_Y} />
     </>
   );
+}
+
+/* GamingChair: the downloaded chair model, auto-scaled to CHAIR_HEIGHT and dropped onto the
+   floor in front of the desk (CHAIR_ALONG across its width, CHAIR_GAP out from the room-side
+   edge), facing the screens. Black + red native materials are kept as-is. The world bounding
+   box is measured AFTER the rotation/scale so the deep SketchUp hierarchy can't throw off the
+   fit, then the base is dropped to the floor and the body centered on [x, z]. */
+function GamingChair({ deskBox }: { deskBox: THREE.Box3 }) {
+  const { scene } = useGLTF(CHAIR_URL);
+  const node = useMemo(() => {
+    const o = scene.clone(true);
+    o.rotation.set(0, CHAIR_ROT_Y, 0);
+    o.scale.setScalar(1);
+    o.updateMatrixWorld(true);
+    const size = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+    o.scale.setScalar(CHAIR_HEIGHT / size.y);
+    o.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(o);
+    const cx = (box.min.x + box.max.x) / 2;
+    const cz = (box.min.z + box.max.z) / 2;
+    const x = THREE.MathUtils.lerp(deskBox.min.x, deskBox.max.x, CHAIR_ALONG);
+    const z = deskBox.max.z + CHAIR_GAP;
+    o.position.set(x - cx, -HY - box.min.y, z - cz); // center on x/z, base on the floor
+    return o;
+  }, [scene, deskBox]);
+  return <primitive object={node} />;
 }
 
 function Furniture() {
@@ -556,15 +826,512 @@ function Furniture() {
   );
   return (
     <>
-      <CornerModel url={BED_URL} target={BED_TARGET} cornerX={-1} cornerZ={-1} rotY={BED_ROT_Y} />
+      <Bed />
       <primitive object={desk.object} />
       <GamingSetup deskBox={desk.box} />
+      <GamingChair deskBox={desk.box} />
     </>
   );
 }
 useGLTF.preload(BED_URL);
 useGLTF.preload(DESK_URL);
 useGLTF.preload(PC_URL);
+useGLTF.preload(DESKSET_URL);
+useGLTF.preload(CHAIR_URL);
+
+/* Procedural textures for the space-themed fan (drawn once to a canvas). galaxyTexture =
+   deep space + nebula + stars for the blades; earthTexture = a stylized Earth for the glowing
+   globe light. Both are used as map + emissiveMap so they read vividly under any room light. */
+function galaxyTexture() {
+  const c = document.createElement("canvas");
+  c.width = 512;
+  c.height = 256;
+  const x = c.getContext("2d");
+  if (x) {
+    const g = x.createLinearGradient(0, 0, 512, 256);
+    g.addColorStop(0, "#0c1230"); // deep navy — the Discovery's blades are blue-black, not bright
+    g.addColorStop(0.5, "#16255a");
+    g.addColorStop(1, "#0d1638");
+    x.fillStyle = g;
+    x.fillRect(0, 0, 512, 256);
+    // soft nebula clouds (additive) — cool blues/violets only; the warm tones live in the swoosh
+    const neb: [string, number][] = [["#1e4fae", 0.45], ["#3b7ccc", 0.35], ["#6a3ac0", 0.28]];
+    x.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 14; i++) {
+      const [col, a] = neb[i % neb.length];
+      const cx = Math.random() * 512, cy = Math.random() * 256, r = 40 + Math.random() * 120;
+      const rg = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+      rg.addColorStop(0, col);
+      rg.addColorStop(1, "rgba(0,0,0,0)");
+      x.globalAlpha = a * 0.5;
+      x.fillStyle = rg;
+      x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
+    }
+    x.globalAlpha = 1;
+    x.globalCompositeOperation = "source-over";
+    // star field
+    for (let i = 0; i < 420; i++) {
+      x.fillStyle = `rgba(255,255,255,${0.4 + Math.random() * 0.6})`;
+      x.beginPath(); x.arc(Math.random() * 512, Math.random() * 256, Math.random() * 1.2, 0, Math.PI * 2); x.fill();
+    }
+    // a few bright glowing stars, plus a sprinkle of tinted ones (icy blue / warm gold)
+    for (let i = 0; i < 12; i++) {
+      const sx = Math.random() * 512, sy = Math.random() * 256;
+      const rg = x.createRadialGradient(sx, sy, 0, sx, sy, 8);
+      rg.addColorStop(0, "rgba(255,255,255,0.9)");
+      rg.addColorStop(1, "rgba(255,255,255,0)");
+      x.fillStyle = rg;
+      x.beginPath(); x.arc(sx, sy, 8, 0, Math.PI * 2); x.fill();
+    }
+    for (let i = 0; i < 26; i++) {
+      x.fillStyle = i % 2 ? "rgba(190,220,255,0.85)" : "rgba(255,230,190,0.8)";
+      x.beginPath(); x.arc(Math.random() * 512, Math.random() * 256, 0.8 + Math.random() * 1.1, 0, Math.PI * 2); x.fill();
+    }
+    // the rocket's exhaust trail — a wide periwinkle band with a dusty-pink upper edge that
+    // S-curves across the blade from root to tip, ending at the rocket (per Francisco's own
+    // photos in Private Random Stuff/References/Fan/ — NOT orange like the stock listing, and
+    // no moon / orbit ring)
+    const trail = (w: number, col: string, a: number, lift: number) => {
+      x.globalAlpha = a;
+      x.strokeStyle = col;
+      x.lineWidth = w;
+      x.lineCap = "round";
+      x.beginPath();
+      x.moveTo(20, 60 + lift);
+      x.bezierCurveTo(180, 30 + lift, 240, 250 + lift, 424, 118 + lift);
+      x.stroke();
+    };
+    trail(58, "#7e97d8", 0.5, 0);    // the wide band
+    trail(26, "#a8c0f0", 0.55, 6);   // brighter core
+    trail(12, "#d8a0b8", 0.75, -28); // dusty-pink edge stripe
+    x.globalAlpha = 1;
+    // soft blue glow where the trail meets the rocket at the tip
+    const bgl = x.createRadialGradient(430, 118, 0, 430, 118, 46);
+    bgl.addColorStop(0, "rgba(159,208,245,0.4)");
+    bgl.addColorStop(1, "rgba(159,208,245,0)");
+    x.fillStyle = bgl;
+    x.beginPath(); x.arc(430, 118, 46, 0, Math.PI * 2); x.fill();
+    // the little rocket ship at the blade tip (white hull, slate fins, blue flame)
+    x.save();
+    x.translate(430, 118);
+    x.rotate(-0.5);
+    x.fillStyle = "#e8edf4"; // hull
+    x.beginPath();
+    x.moveTo(-20, -8); x.lineTo(8, -8);
+    x.quadraticCurveTo(24, 0, 8, 8); x.lineTo(-20, 8);
+    x.quadraticCurveTo(-26, 0, -20, -8); x.closePath(); x.fill();
+    x.fillStyle = "#7f93b8"; // nose cone
+    x.beginPath(); x.moveTo(8, -8); x.quadraticCurveTo(24, 0, 8, 8); x.closePath(); x.fill();
+    x.fillStyle = "#3a4a66"; // window
+    x.beginPath(); x.arc(-4, 0, 4, 0, Math.PI * 2); x.fill();
+    x.fillStyle = "#7f93b8"; // fins
+    x.beginPath(); x.moveTo(-20, -8); x.lineTo(-30, -14); x.lineTo(-17, -4); x.closePath(); x.fill();
+    x.beginPath(); x.moveTo(-20, 8); x.lineTo(-30, 14); x.lineTo(-17, 4); x.closePath(); x.fill();
+    x.fillStyle = "rgba(150,200,255,0.9)"; // flame
+    x.beginPath(); x.moveTo(-20, -4); x.lineTo(-34, 0); x.lineTo(-20, 4); x.closePath(); x.fill();
+    x.restore();
+    // soft vignette so the blade edges read darker and the art gains depth
+    const vg = x.createRadialGradient(256, 128, 90, 256, 128, 300);
+    vg.addColorStop(0, "rgba(5,8,20,0)");
+    vg.addColorStop(1, "rgba(5,8,20,0.4)");
+    x.fillStyle = vg;
+    x.fillRect(0, 0, 512, 256);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+function earthTexture() {
+  const c = document.createElement("canvas");
+  c.width = 512;
+  c.height = 256; // 2:1 equirectangular, wraps cleanly onto the globe sphere
+  const x = c.getContext("2d");
+  if (x) {
+    const g = x.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, "#1b6aa8");
+    g.addColorStop(0.5, "#1f7fc0");
+    g.addColorStop(1, "#175a92");
+    x.fillStyle = g;
+    x.fillRect(0, 0, 512, 256);
+    // organic green/tan landmasses
+    const land = ["#3f8f3a", "#4e9c45", "#7d8a3e", "#b59a5e"];
+    for (let i = 0; i < 22; i++) {
+      x.fillStyle = land[i % land.length];
+      const cx = Math.random() * 512, cy = 40 + Math.random() * 180, n = 6 + Math.floor(Math.random() * 5), rad = 14 + Math.random() * 40;
+      x.beginPath();
+      for (let k = 0; k < n; k++) {
+        const ang = (k / n) * Math.PI * 2, rr = rad * (0.5 + Math.random() * 0.8);
+        const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr * 0.7;
+        if (k) x.lineTo(px, py); else x.moveTo(px, py);
+      }
+      x.closePath(); x.fill();
+    }
+    // polar ice caps
+    x.fillStyle = "rgba(240,245,255,0.85)";
+    x.fillRect(0, 0, 512, 14);
+    x.fillRect(0, 244, 512, 12);
+    // wispy clouds
+    x.globalAlpha = 0.5;
+    x.fillStyle = "#ffffff";
+    for (let i = 0; i < 26; i++) {
+      x.beginPath(); x.arc(Math.random() * 512, Math.random() * 256, 8 + Math.random() * 22, 0, Math.PI * 2); x.fill();
+    }
+    x.globalAlpha = 1;
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/* CeilingFan: a procedural fan + light kit hung from the ceiling — the room's main overhead
+   source, and a hero object dead-center, so it's built for fidelity AND personality. Modeled
+   on Francisco's real fan, the Hunter Discovery 52298 (48-in brushed nickel; ref photo in
+   Private Random Stuff/References/fan/): turned (lathe) motor housing, broad almond blades
+   with starfield + comet-swoosh + orbiting-rocket art, brushed-nickel brackets, and a glowing
+   Earth-bowl light kit hugging the motor. Blades spin each frame (FAN_SPEED). Geometry +
+   textures are memoized (built once). Any tweaks here: keep public/fan-preview.html in sync. */
+function CeilingFan() {
+  const blades = useRef<THREE.Group>(null);
+  useFrame((_, dt) => {
+    if (blades.current) blades.current.rotation.y += FAN_SPEED * dt;
+  });
+
+  const bladeAngles = useMemo(
+    () => Array.from({ length: FAN_BLADES }, (_, i) => (i / FAN_BLADES) * Math.PI * 2),
+    [],
+  );
+
+  // aim point for the light kit's beam — straight down at the floor under the fan
+  const bulbTarget = useMemo(() => {
+    const o = new THREE.Object3D();
+    o.position.set(0, -2 * HY, 0);
+    return o;
+  }, []);
+
+  const geo = useMemo(() => {
+    // brushed-nickel motor housing — a stepped turned profile (radius, height), centered ~0
+    const prof: [number, number][] = [
+      [0.0, 0.17], [0.27, 0.17], [0.31, 0.13], [0.31, 0.03], [0.34, 0.01],
+      [0.34, -0.05], [0.31, -0.07], [0.31, -0.15], [0.22, -0.2], [0.0, -0.2],
+    ];
+    const housing = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 64);
+
+    // teardrop blade bracket — a flat nickel arm with an elongated loop cut through it
+    const Lb = 0.6, wb = 0.17;
+    const arm = new THREE.Shape();
+    arm.moveTo(0.02, -0.075);
+    arm.lineTo(Lb - 0.05, -wb * 0.34);
+    arm.quadraticCurveTo(Lb, -wb * 0.34, Lb, 0);
+    arm.quadraticCurveTo(Lb, wb * 0.34, Lb - 0.05, wb * 0.34);
+    arm.lineTo(0.02, 0.075);
+    arm.quadraticCurveTo(-0.05, 0, 0.02, -0.075);
+    const loop = new THREE.Path();
+    loop.absellipse(Lb * 0.54, 0, Lb * 0.32, wb * 0.2, 0, Math.PI * 2, false, 0);
+    arm.holes.push(loop);
+    const bracket = new THREE.ExtrudeGeometry(arm, {
+      depth: 0.05, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01, bevelSegments: 1, steps: 1,
+    });
+    bracket.rotateX(-Math.PI / 2);
+    bracket.translate(0, -0.025, 0);
+
+    // blade — a broad almond paddle (the Discovery's wide blades): pinched at the root,
+    // widest just past mid-span, tapering to a soft point at the tip
+    const L = FAN_RADIUS - 0.62, wRoot = 0.16, wMax = 0.84;
+    const s = new THREE.Shape();
+    s.moveTo(0, -wRoot / 2);
+    s.bezierCurveTo(L * 0.25, -wMax * 0.42, L * 0.55, -wMax / 2, L * 0.8, -wMax * 0.4);
+    s.quadraticCurveTo(L * 0.98, -wMax * 0.16, L, 0);     // soft-pointed tip
+    s.quadraticCurveTo(L * 0.98, wMax * 0.16, L * 0.8, wMax * 0.4);
+    s.bezierCurveTo(L * 0.55, wMax / 2, L * 0.25, wMax * 0.42, 0, wRoot / 2);
+    s.closePath();
+    const blade = new THREE.ExtrudeGeometry(s, {
+      depth: 0.06, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 1, steps: 1,
+    });
+    blade.rotateX(-Math.PI / 2);    // lay flat: length X, width Z, thickness Y
+    blade.translate(0, -0.03, 0);   // center the thickness on Y
+    // remap UVs to 0..1 across the blade so the galaxy texture (incl. its rocket) sits cleanly
+    blade.computeBoundingBox();
+    const bb = blade.boundingBox!;
+    const span = bb.getSize(new THREE.Vector3());
+    const p = blade.attributes.position, uv = blade.attributes.uv;
+    for (let i = 0; i < p.count; i++) {
+      uv.setXY(i, (p.getX(i) - bb.min.x) / span.x, (p.getZ(i) - bb.min.z) / span.z);
+    }
+    uv.needsUpdate = true;
+
+    // star-shaped pull tab
+    const starSh = new THREE.Shape();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 0.03 : 0.07;
+      const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+      const px = Math.cos(a) * r, py = Math.sin(a) * r;
+      if (i) starSh.lineTo(px, py); else starSh.moveTo(px, py);
+    }
+    starSh.closePath();
+    const star = new THREE.ExtrudeGeometry(starSh, { depth: 0.015, bevelEnabled: false });
+    star.center();
+
+    return { housing, bracket, blade, star, galaxy: galaxyTexture(), earth: earthTexture() };
+  }, []);
+
+  const droop = 0.12; // blades angle down-and-out from the motor
+  const pitch = 0.24; // blade angle of attack (the twist)
+  return (
+    <group position={FAN_POS}>
+      {/* brushed-nickel canopy + short chrome downrod — a low-profile hugger mount */}
+      <mesh position={[0, -0.03, 0]}>
+        <cylinderGeometry args={[0.2, 0.27, 0.1, 48]} />
+        <meshStandardMaterial color={FAN.metal} roughness={0.35} metalness={0.9} />
+      </mesh>
+      <mesh position={[0, -0.16, 0]}>
+        <cylinderGeometry args={[0.06, 0.06, 0.18, 24]} />
+        <meshStandardMaterial color={FAN.chrome} roughness={0.18} metalness={1} />
+      </mesh>
+
+      {/* brushed-nickel motor housing, with a dark graphite badge band around its waist so
+          the metal reads against it (artistic liberty — gives the nickel something to pop off) */}
+      <mesh geometry={geo.housing} position={[0, -0.4, 0]}>
+        <meshStandardMaterial color={FAN.chrome} roughness={0.26} metalness={0.95} />
+      </mesh>
+      <mesh position={[0, -0.42, 0]}>
+        <cylinderGeometry args={[0.345, 0.345, 0.05, 64]} />
+        <meshStandardMaterial color="#2a2d33" roughness={0.5} metalness={0.3} />
+      </mesh>
+
+      {/* spinning rotor: 5 teardrop brackets, each carrying a long galaxy blade */}
+      <group ref={blades} position={[0, -0.42, 0]}>
+        {bladeAngles.map((a, i) => (
+          <group key={i} rotation={[0, a, 0]}>
+            <group rotation={[0, 0, -droop]}>
+              <mesh geometry={geo.bracket} position={[0.16, 0, 0]}>
+                <meshStandardMaterial color={FAN.chrome} roughness={0.24} metalness={0.97} />
+              </mesh>
+              <mesh geometry={geo.blade} position={[0.62, -0.02, 0]} rotation={[pitch, 0, 0]}>
+                <meshStandardMaterial map={geo.galaxy} emissiveMap={geo.galaxy} emissive="#ffffff" emissiveIntensity={0.6} roughness={0.8} metalness={0.1} />
+              </mesh>
+            </group>
+          </group>
+        ))}
+      </group>
+
+      {/* Earth light kit — a true spherical cap (the bottom face of a much larger sphere, so
+          the curve is smooth, not squashed), painted as Earth and lit from within. It floats
+          with a small gap below the nickel fixture ring, like real light-kit glass. */}
+      <mesh position={[0, -0.6, 0]}>
+        <cylinderGeometry args={[0.5, 0.53, 0.09, 48]} />
+        <meshStandardMaterial color={FAN.chrome} roughness={0.24} metalness={0.97} />
+      </mesh>
+      <mesh position={[0, -0.29, 0]}>
+        <sphereGeometry args={[0.61, 48, 24, 0, Math.PI * 2, Math.PI * 0.72, Math.PI * 0.28]} />
+        <meshStandardMaterial map={geo.earth} emissiveMap={geo.earth} emissive="#ffffff" emissiveIntensity={1.8} roughness={0.45} metalness={0} side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* nickel finial at the bowl's base; the two pull chains hang beside it (star pull =
+          fan, cylinder pull = light) — matches Francisco's photos */}
+      <mesh position={[0, -0.93, 0]}>
+        <sphereGeometry args={[0.055, 24, 18]} />
+        <meshStandardMaterial color={FAN.chrome} roughness={0.25} metalness={0.95} />
+      </mesh>
+      <group position={[0.09, -0.9, 0.04]}>
+        <mesh position={[0, -0.24, 0]}>
+          <cylinderGeometry args={[0.007, 0.007, 0.48, 8]} />
+          <meshStandardMaterial color={FAN.chrome} roughness={0.3} metalness={0.9} />
+        </mesh>
+        <mesh geometry={geo.star} position={[0, -0.51, 0]}>
+          <meshStandardMaterial color={FAN.metal} roughness={0.4} metalness={0.6} />
+        </mesh>
+      </group>
+      <group position={[-0.07, -0.9, -0.05]}>
+        <mesh position={[0, -0.15, 0]}>
+          <cylinderGeometry args={[0.007, 0.007, 0.3, 8]} />
+          <meshStandardMaterial color={FAN.chrome} roughness={0.3} metalness={0.9} />
+        </mesh>
+        <mesh position={[0, -0.33, 0]}>
+          <cylinderGeometry args={[0.016, 0.016, 0.06, 12]} />
+          <meshStandardMaterial color={FAN.chrome} roughness={0.25} metalness={0.95} />
+        </mesh>
+      </group>
+
+      {/* the bulb — a wide cone thrown DOWN from inside the Earth globe, so the pool of
+          light lands on the floor under the fan (a bare point light here lit the ceiling
+          right above the fixture brightest, which read as light from the wrong place).
+          The tiny glow's throw is SHORTER than the bulb→ceiling gap, so it can only kiss
+          the finial/chains — the visible "source" stays pinned at the glowing globe. */}
+      <primitive object={bulbTarget} />
+      <spotLight
+        position={[0, -0.76, 0]}
+        target={bulbTarget}
+        angle={1.15}
+        penumbra={0.9}
+        distance={30}
+        decay={2}
+        intensity={FAN_LIGHT}
+        color={FAN_LIGHT_COLOR}
+      />
+      <pointLight position={[0, -0.85, 0]} intensity={3} distance={0.8} decay={2} color={FAN_LIGHT_COLOR} />
+    </group>
+  );
+}
+
+/* ---------- crown molding ----------
+   A painted cove where the walls meet the ceiling (same paint as the window trim, like
+   Francisco's real room). One extruded profile — flat fillet, cove sweep, ceiling lip —
+   run along the three standing walls; the corner joints simply overlap (same material,
+   so they read as miters from every camera stop). */
+const CROWN_H = 0.35;      // drop down the wall
+const CROWN_D = 0.35;      // reach across the ceiling
+const TRIM_PAINT = "#e3ddd0"; // shared with the window frame
+
+function crownGeo(length: number) {
+  const p = new THREE.Shape();
+  p.moveTo(0, -CROWN_H);
+  p.lineTo(0.06, -CROWN_H);              // bottom fillet against the wall
+  p.lineTo(0.06, -CROWN_H + 0.05);
+  p.quadraticCurveTo(0.1, -0.1, CROWN_D - 0.07, -0.06); // the cove sweep up + out
+  p.lineTo(CROWN_D - 0.07, -0.02);
+  p.lineTo(CROWN_D, -0.02);              // top lip along the ceiling
+  p.lineTo(CROWN_D, 0);
+  p.lineTo(0, 0);
+  p.closePath();
+  const g = new THREE.ExtrudeGeometry(p, { depth: length, bevelEnabled: false, steps: 1 });
+  g.translate(0, 0, -length / 2); // center the run so wall meshes place symmetrically
+  return g;
+}
+
+function CrownMolding() {
+  const geos = useMemo(() => ({ back: crownGeo(HX * 2), side: crownGeo(HZ * 2) }), []);
+  const mat = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: TRIM_PAINT, roughness: 0.55, metalness: 0 }),
+    [],
+  );
+  return (
+    <group>
+      <mesh geometry={geos.back} material={mat} position={[0, HY, -HZ]} rotation={[0, -Math.PI / 2, 0]} />
+      <mesh geometry={geos.side} material={mat} position={[-HX, HY, 0]} />
+      <mesh geometry={geos.side} material={mat} position={[HX, HY, 0]} rotation={[0, Math.PI, 0]} />
+    </group>
+  );
+}
+
+/* ---------- window (daylight outside) + sunlight ----------
+   A classic white double-hung window on the BACK wall, just right of the education
+   placard (Francisco's call; the experience placard scooched right in roomStops.ts to
+   make room). The wall has a REAL hole cut behind the frame (see Walls), the jambs +
+   sashes recess OUT through it like true wall thickness, and the outside is a real CC0
+   photo (Poly Haven panorama crop — see Window) on a big plane ~3 units past the wall,
+   so moving around the room shifts what you see through the glass (parallax) instead of
+   reading as a flat poster. Its light is a warm sun-beam raking down across the room —
+   the daytime key, playing against the fan's warm accent. */
+const WINDOW_POS: [number, number, number] = [-1.5, 1.2, -HZ + 0.01]; // back wall, between education + experience
+const WINDOW_ROT_Y = 0; // frame is built facing +Z = straight into the room from the back wall
+const WINDOW_W = 4.6; // glass width (= the hole cut in the wall)
+const WINDOW_H = 2.9; // glass height (split into upper/lower sash)
+
+function Window() {
+  // real photograph outside (CC0, Poly Haven "Kloofendal 48d Partly Cloudy" — a window-
+  // shaped crop from the tonemapped panorama: blue sky, cumulus, leafy suburb on a hill;
+  // see CREDITS.md). Procedural canvas skies were tried and read as a kid's drawing.
+  const view = useTexture("/textures/window-view.jpg");
+  useMemo(() => {
+    view.colorSpace = THREE.SRGBColorSpace;
+    view.wrapS = view.wrapT = THREE.ClampToEdgeWrapping;
+    view.anisotropy = 8;
+    view.needsUpdate = true;
+  }, [view]);
+  const W = WINDOW_W, H = WINDOW_H;
+  const D = 0.32; // reveal depth — how far the jambs run OUT through the wall opening
+  const J = 0.09; // jamb board thickness
+  const paint = <meshStandardMaterial color={TRIM_PAINT} roughness={0.55} metalness={0} />;
+  return (
+    <group position={WINDOW_POS} rotation={[0, WINDOW_ROT_Y, 0]}>
+      {/* the outside world — the photo floats past the wall so off-axis views shift it
+          (parallax). Plane 15×6.5 matches the photo's 2.31 aspect exactly (no stretch) and
+          is sized so every sight line through the opening (checked against the camera
+          stops' extremes, incl. the close/dolly poses) lands on it. Fog is off: it must
+          read as daylight out there, not indoor haze. */}
+      <mesh position={[0, 0.5, -3.2]}>
+        <planeGeometry args={[15, 6.5]} />
+        <meshStandardMaterial map={view} emissiveMap={view} emissive="#ffffff" emissiveIntensity={1.1} roughness={1} metalness={0} fog={false} />
+      </mesh>
+
+      {/* real glass — near-invisible, just a whisper of cool sheen over the view */}
+      <mesh position={[0, 0, -0.22]}>
+        <planeGeometry args={[W, H]} />
+        <meshStandardMaterial color="#dceaf2" transparent opacity={0.08} roughness={0.08} metalness={0} depthWrite={false} />
+      </mesh>
+
+      {/* reveal: painted jambs lining the opening OUT through the wall */}
+      <mesh position={[-W / 2 - J / 2, 0, -D / 2]}><boxGeometry args={[J, H + 2 * J, D]} />{paint}</mesh>
+      <mesh position={[W / 2 + J / 2, 0, -D / 2]}><boxGeometry args={[J, H + 2 * J, D]} />{paint}</mesh>
+      <mesh position={[0, H / 2 + J / 2, -D / 2]}><boxGeometry args={[W, J, D]} />{paint}</mesh>
+      <mesh position={[0, -H / 2 - J / 2, -D / 2]}><boxGeometry args={[W, J, D]} />{paint}</mesh>
+
+      {/* casing — picture-frame trim on the room face of the wall */}
+      <mesh position={[0, H / 2 + J + 0.11, 0.035]}><boxGeometry args={[W + 2 * J + 0.44, 0.22, 0.07]} />{paint}</mesh>
+      <mesh position={[-W / 2 - J - 0.11, 0, 0.035]}><boxGeometry args={[0.22, H + 2 * J, 0.07]} />{paint}</mesh>
+      <mesh position={[W / 2 + J + 0.11, 0, 0.035]}><boxGeometry args={[0.22, H + 2 * J, 0.07]} />{paint}</mesh>
+
+      {/* stool (deep sill with horns, spanning the reveal + lipping into the room) + apron */}
+      <mesh position={[0, -H / 2 - J - 0.005, (0.16 - D) / 2]}><boxGeometry args={[W + 2 * J + 0.5, 0.07, D + 0.16]} />{paint}</mesh>
+      <mesh position={[0, -H / 2 - J - 0.14, 0.03]}><boxGeometry args={[W + 2 * J + 0.2, 0.2, 0.06]} />{paint}</mesh>
+
+      {/* double-hung sashes set into the reveal: upper sash deeper, lower sash nearer
+          the room (classic overlap) */}
+      <mesh position={[-W / 2 + 0.045, H / 4, -0.18]}><boxGeometry args={[0.09, H / 2, 0.07]} />{paint}</mesh>
+      <mesh position={[W / 2 - 0.045, H / 4, -0.18]}><boxGeometry args={[0.09, H / 2, 0.07]} />{paint}</mesh>
+      <mesh position={[0, H / 2 - 0.045, -0.18]}><boxGeometry args={[W, 0.09, 0.07]} />{paint}</mesh>
+      <mesh position={[-W / 2 + 0.045, -H / 4, -0.08]}><boxGeometry args={[0.09, H / 2, 0.09]} />{paint}</mesh>
+      <mesh position={[W / 2 - 0.045, -H / 4, -0.08]}><boxGeometry args={[0.09, H / 2, 0.09]} />{paint}</mesh>
+      <mesh position={[0, -H / 2 + 0.045, -0.08]}><boxGeometry args={[W, 0.09, 0.09]} />{paint}</mesh>
+      {/* check rail where the two sashes meet */}
+      <mesh position={[0, 0, -0.13]}><boxGeometry args={[W, 0.11, 0.12]} />{paint}</mesh>
+      {/* muntins: each sash split into three panes */}
+      <mesh position={[-W / 6, H / 4, -0.19]}><boxGeometry args={[0.035, H / 2, 0.04]} />{paint}</mesh>
+      <mesh position={[W / 6, H / 4, -0.19]}><boxGeometry args={[0.035, H / 2, 0.04]} />{paint}</mesh>
+      <mesh position={[-W / 6, -H / 4, -0.09]}><boxGeometry args={[0.035, H / 2, 0.04]} />{paint}</mesh>
+      <mesh position={[W / 6, -H / 4, -0.09]}><boxGeometry args={[0.035, H / 2, 0.04]} />{paint}</mesh>
+      {/* nickel sash lift on the lower rail */}
+      <mesh position={[0, -H / 2 + 0.1, -0.01]}>
+        <boxGeometry args={[0.3, 0.05, 0.05]} />
+        <meshStandardMaterial color="#c9ccd2" roughness={0.3} metalness={0.9} />
+      </mesh>
+    </group>
+  );
+}
+
+/* Sunlight: a warm beam from the window, raking down across the room's center floor.
+   Its intensity breathes very slowly (like thin clouds drifting past the sun) so the
+   room feels alive. */
+function Sunlight() {
+  const light = useRef<THREE.SpotLight>(null);
+  const target = useMemo(() => {
+    const o = new THREE.Object3D();
+    o.position.set(0.5, -HY, 3.5); // falls across the center floor, toward the front of the room
+    return o;
+  }, []);
+  useFrame(({ clock }) => {
+    if (light.current) light.current.intensity = SUN * (0.94 + 0.06 * Math.sin(clock.elapsedTime * 0.25));
+  });
+  return (
+    <>
+      <primitive object={target} />
+      <spotLight
+        ref={light}
+        position={[WINDOW_POS[0], WINDOW_POS[1], -HZ + 0.4]}
+        target={target}
+        angle={0.95}
+        penumbra={0.9}
+        distance={34}
+        decay={1.6}
+        intensity={SUN}
+        color="#fff1cf"
+      />
+    </>
+  );
+}
 
 /* ---------- one section marker: a lit placard on a wall ---------- */
 function Marker({
@@ -665,19 +1432,18 @@ function Rig({
   const arriveTime = useRef(0);
   const arcCur = useRef(0);
 
-  useFrame(() => {
+  useFrame((_, rawDt) => {
     const N = STOPS.length;
+    // clamp dt so a long frame (tab refocus, GC pause) can't lurch the camera in one step
+    const dt = Math.min(rawDt, 0.05);
 
-    // ease focus 0→N-1
+    // Ease focus toward the target stop with frame-rate-independent exponential damping.
+    // The old code stepped at a fixed per-frame rate and then SNAPPED the final fraction to
+    // land — a tiny teleport on arrival, plus speed that varied with refresh rate. damp()
+    // decelerates smoothly into the stop and behaves identically at 60Hz or 144Hz.
     if (reduce.current) curF.current = targetF.current;
-    else {
-      // constant-speed pan: step toward the target at one fixed rate (no easing,
-      // no acceleration), so the camera glides evenly however hard you scroll and
-      // never creeps at the tail. Snaps the final sub-step to land cleanly.
-      const diff = targetF.current - curF.current;
-      if (Math.abs(diff) <= PAN_SPEED) curF.current = targetF.current;
-      else curF.current += Math.sign(diff) * PAN_SPEED;
-    }
+    else curF.current = THREE.MathUtils.damp(curF.current, targetF.current, PAN_LAMBDA, dt);
+
     const f = Math.max(0, Math.min(N - 1, curF.current));
     const i0 = Math.floor(f);
     const i1 = Math.min(N - 1, i0 + 1);
@@ -685,7 +1451,7 @@ function Rig({
     const A = STOPS[i0];
     const B = STOPS[i1];
 
-    // Overview pose between the two nearest stops — the wide, pulled-back view.
+    // Wide "overview" pose + look, lerped continuously between the two nearest stops.
     const bx = lerp(A.pos[0], B.pos[0], t);
     const by = lerp(A.pos[1], B.pos[1], t);
     const bz = lerp(A.pos[2], B.pos[2], t);
@@ -693,10 +1459,15 @@ function Rig({
     const ay = lerp(A.look[1], B.look[1], t);
     const az = lerp(A.look[2], B.look[2], t);
 
-    // Zoom: REST on the wide room, then pulse IN onto each item as you arrive —
-    // hold briefly, ease back out. Driven off arrival (settled on a stop), not raw
-    // position, so the zoom-in always targets a real stop (no flip mid-transition).
-    // While panning between stops it stays zoomed out; on load it begins wide.
+    // Close-up pose, ALSO lerped continuously between the two nearest stops. The old code
+    // read STOPS[Math.round(f)] here, which snapped to the next stop's close pose at the
+    // midpoint — a visible jump whenever the settle-zoom was active across a transition.
+    const cx = lerp(A.close[0], B.close[0], t);
+    const cy = lerp(A.close[1], B.close[1], t);
+    const cz = lerp(A.close[2], B.close[2], t);
+
+    // Settle zoom: rest on the wide room, then pulse IN onto an item on arrival, hold briefly,
+    // ease back out. Driven off arrival (settled), so it only zooms onto a real stop.
     const now = performance.now();
     const settled = Math.abs(targetF.current - curF.current) < 0.001;
     let arcTarget: number;
@@ -710,30 +1481,19 @@ function Rig({
       wasSettled.current = false;
       arcTarget = 0; // zoomed out while traveling
     }
-    arcCur.current += (arcTarget - arcCur.current) * ZOOM_EASE;
+    arcCur.current = THREE.MathUtils.damp(arcCur.current, arcTarget, ZOOM_LAMBDA, dt);
     const arc = reduce.current ? 0 : SETTLE_ZOOM * arcCur.current;
 
-    // click-to-inspect eases the camera the rest of the way in to the nearest
-    // stop's close-up pose (0→1); it wins over the pulse so the two never fight.
+    // click-to-inspect eases the camera the rest of the way in to the close-up pose (0→1);
+    // it wins over the pulse (max) so the two never fight.
     const wantZoom = inspectRef.current != null ? 1 : 0;
     if (reduce.current) curZoom.current = wantZoom;
-    else {
-      curZoom.current += (wantZoom - curZoom.current) * 0.12;
-      if (Math.abs(wantZoom - curZoom.current) < 0.0012) curZoom.current = wantZoom;
-    }
+    else curZoom.current = THREE.MathUtils.damp(curZoom.current, wantZoom, INSPECT_LAMBDA, dt);
     const zf = Math.max(curZoom.current, arc);
-    const S = STOPS[Math.round(f)];
 
-    camera.position.set(
-      lerp(bx, S.close[0], zf),
-      lerp(by, S.close[1], zf),
-      lerp(bz, S.close[2], zf),
-    );
-    aim.current.set(
-      lerp(ax, S.look[0], zf),
-      lerp(ay, S.look[1], zf),
-      lerp(az, S.look[2], zf),
-    );
+    // Everything below is continuous in f and zf, so there are no jumps anywhere in the pan.
+    camera.position.set(lerp(bx, cx, zf), lerp(by, cy, zf), lerp(bz, cz, zf));
+    aim.current.set(ax, ay, az); // close-up looks at the same point as the wide view
     camera.lookAt(aim.current);
 
     const nearest = Math.round(f);
@@ -771,22 +1531,27 @@ export default function RoomScene({
       dpr={1}
       gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: EXPOSURE }}
     >
-      <color attach="background" args={["#15100b"]} />
-      <fog attach="fog" args={["#15100b", 16, 40]} />
+      <color attach="background" args={["#241c12"]} />
+      <fog attach="fog" args={["#241c12", 16, 40]} />
 
-      {/* Warm evening light, kept deliberately calm. Confirmed overexposed-white in a
-         real browser, so a soft hemisphere fill dominates (even, won't clip), a low
-         directional adds gentle modeling, and a small warm point is the lamp glow.
-         With ACES tone mapping (on the Canvas above) this should read as a warm room,
-         not white. Tune against a real browser. */}
-      <ambientLight intensity={AMBIENT} color="#ffe0bf" />
-      <hemisphereLight args={["#ffdca6", "#2a1c10", HEMI]} />
-      <directionalLight position={[2.5, 5, 3.5]} intensity={KEY} color="#ffcb8a" />
-      <pointLight position={[1.5, 2.2, 1]} intensity={LAMP} distance={16} decay={2} color="#ffb066" />
+      {/* Two-source lighting, daytime edition: warm sunlight beaming through the window is
+         the key, with the fan's light kit as the warm overhead accent. The ambient/hemi
+         fill is turned up to daylight levels (blue-ish sky above, warm floor bounce below)
+         so the room reads bright without flattening the beam. Tune against a real browser. */}
+      <ambientLight intensity={AMBIENT} color="#fff3dd" />
+      <hemisphereLight args={["#cfe2ff", "#6b5138", HEMI]} />
+      <Sunlight />
+
+      {/* the ceiling fan IS a light fixture — its light kit pools warm light beneath it */}
+      <CeilingFan />
+      <Suspense fallback={null}>
+        <Window />
+      </Suspense>
 
       <Suspense fallback={null}>
         <Walls />
       </Suspense>
+      <CrownMolding />
 
       <Suspense fallback={null}>
         <Furniture />
@@ -797,6 +1562,10 @@ export default function RoomScene({
       ))}
 
       <Rig targetF={targetF} curF={curF} curZoom={curZoom} inspectRef={inspectRef} onFocus={onFocus} />
+
+      {/* DEV-ONLY FPS/MS meter (top-left). Auto-excluded from the production build via the
+          NODE_ENV guard; delete this line entirely for the final product. */}
+      {process.env.NODE_ENV !== "production" && <Stats />}
     </Canvas>
   );
 }

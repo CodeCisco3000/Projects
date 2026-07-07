@@ -20,6 +20,8 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import { useGLTF, useTexture, useProgress, Stats, Environment, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
 import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
+import WallDecor from "./room/WallDecor";
+import { MARKER_ART, makeArtTexture } from "./room/canvasArt";
 
 /* room half-extents (world units): walls at x=±HX, floor/ceiling at y=∓HY,
    back wall at z=-HZ, opening toward +Z. Enlarged per live review so furniture
@@ -1541,7 +1543,16 @@ function Sunlight() {
   );
 }
 
-/* ---------- one section marker: a lit placard on a wall ---------- */
+/* ---------- one section marker: a framed piece on a wall ----------
+   Each stop's marker is now a real framed object — its art (canvasArt.ts)
+   carries the section label, which also brings the labels back without
+   troika (whose CDN-font web workers were the context-loss suspect).
+   The art plane glows gently when the stop is focused; the whole group
+   pops ~6%. The frame hugs its wall (stop.look floats up to 0.4 off the
+   wall for camera aim — the visual is placed flush so nothing floats). */
+const MARKER_W = 1.8;
+const MARKER_H = 1.15;
+const MARKER_D = 0.08;
 function Marker({
   stop,
   active,
@@ -1553,6 +1564,17 @@ function Marker({
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const matRef = useRef<THREE.MeshStandardMaterial>(null);
+  const art = useMemo(() => makeArtTexture(MARKER_ART[stop.id]()), [stop.id]);
+
+  // the marker visual sits flush against its wall; stop.look (the camera's
+  // aim point) can stay slightly proud of it without anything floating
+  const pos = useMemo<[number, number, number]>(() => {
+    const p: [number, number, number] = [...stop.look];
+    if (stop.wall === "left") p[0] = -HX + MARKER_D / 2 + 0.01;
+    else if (stop.wall === "right") p[0] = HX - MARKER_D / 2 - 0.01;
+    else p[2] = -HZ + MARKER_D / 2 + 0.01;
+    return p;
+  }, [stop]);
 
   // ease the focus highlight (emissive glow + a small pop) every frame
   useFrame(() => {
@@ -1563,7 +1585,7 @@ function Marker({
       g.scale.setScalar(s);
     }
     if (m) {
-      m.emissiveIntensity = THREE.MathUtils.lerp(m.emissiveIntensity, active ? 0.85 : 0.12, 0.12);
+      m.emissiveIntensity = THREE.MathUtils.lerp(m.emissiveIntensity, active ? 0.42 : 0.05, 0.12);
     }
   });
 
@@ -1573,42 +1595,34 @@ function Marker({
   };
 
   return (
-    <group ref={groupRef} position={stop.look} rotation={[0, WALL_ROT_Y[stop.wall], 0]}>
-      {/* placard body — the click target */}
-      <mesh
-        onClick={(e) => {
-          e.stopPropagation();
-          onActivate();
-        }}
-        onPointerOver={(e) => setCursor(e, true)}
-        onPointerOut={(e) => setCursor(e, false)}
-      >
-        <boxGeometry args={[1.8, 1.15, 0.08]} />
+    <group
+      ref={groupRef}
+      position={pos}
+      rotation={[0, WALL_ROT_Y[stop.wall], 0]}
+      onClick={(e) => {
+        e.stopPropagation();
+        onActivate();
+      }}
+      onPointerOver={(e) => setCursor(e, true)}
+      onPointerOut={(e) => setCursor(e, false)}
+    >
+      {/* walnut frame — also the click target's body */}
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[MARKER_W, MARKER_H, MARKER_D]} />
+        <meshStandardMaterial color="#3a2c20" roughness={0.55} metalness={0.05} />
+      </mesh>
+      {/* the framed art (label painted in); glows softly when focused */}
+      <mesh position={[0, 0, MARKER_D / 2 + 0.002]}>
+        <planeGeometry args={[1.62, 0.99]} />
         <meshStandardMaterial
           ref={matRef}
-          color={COLOR.placard}
-          emissive={COLOR.accent}
-          emissiveIntensity={0.12}
-          roughness={0.7}
+          map={art}
+          emissive="#ffffff"
+          emissiveMap={art}
+          emissiveIntensity={0.05}
+          roughness={0.8}
           metalness={0}
         />
-      </mesh>
-      {/* inset panel for a bit of depth */}
-      <mesh position={[0, 0, 0.045]}>
-        <planeGeometry args={[1.58, 0.93]} />
-        <meshStandardMaterial color="#1a130c" roughness={0.6} metalness={0} />
-      </mesh>
-
-      {/* Section labels (drei <Text>/troika) removed for now: troika spins up web
-         workers, fetches a CDN font, and uploads SDF glyph textures ~1s in — the
-         likeliest trigger of the "THREE.WebGLRenderer: Context Lost" that turned the
-         room white on real hardware. The names already live in the focus rail + the
-         inspect card; labels can return via a bundled font or HTML overlays once the
-         canvas is proven stable. A small accent bar keeps the placard from reading
-         totally blank. */}
-      <mesh position={[0, -0.46, 0.05]}>
-        <boxGeometry args={[1.2, 0.06, 0.03]} />
-        <meshStandardMaterial color={COLOR.brass} emissive={COLOR.accent} emissiveIntensity={0.2} roughness={0.5} metalness={0} />
       </mesh>
     </group>
   );
@@ -1782,6 +1796,7 @@ export default function RoomScene({
         <Walls />
       </Suspense>
       <CrownMolding />
+      <WallDecor />
 
       <Suspense fallback={null}>
         <Furniture />

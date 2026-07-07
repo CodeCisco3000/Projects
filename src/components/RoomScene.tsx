@@ -15,7 +15,7 @@
    WebGL canvas never renders on the server.
    ===================================================================== */
 
-import { Suspense, memo, useEffect, useMemo, useRef } from "react";
+import { Suspense, memo, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { useGLTF, useTexture, useProgress, Stats, Environment, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
@@ -150,6 +150,61 @@ function surfaceMaps(
     normalMap: configureMap(normal.clone(), rx, ry, maxAniso, false),
     roughnessMap: configureMap(rough.clone(), rx, ry, maxAniso, false),
   };
+}
+
+/* LoadGate: drives the DOM loading screen (LoadingScreen.tsx) and kills the
+   first-scroll hitch. three.js compiles a mesh's shader program the first time it
+   enters the camera's view — stop 1 shows a bare wall, so the first scroll used to
+   reveal fresh furniture and compile a dozen programs mid-gesture. Once every
+   loader finishes, this renders ONE extra hidden pass per camera stop behind the
+   curtain: every shader the tour can ever show compiles and every texture uploads
+   through the NORMAL pipeline. (drei's <Preload all /> was tried first — its
+   gl.compile() pass trips a spurious VALIDATE_STATUS shader failure on
+   Windows/ANGLE that blacked out the fan's canvas-textured materials.) A few
+   settle frames after that (shadow maps + contact bake — see StaticShadows), the
+   overlay is told the room is ready. */
+const READY_SETTLE_FRAMES = 8;
+function LoadGate({
+  onProgress,
+  onReady,
+}: {
+  onProgress: (pct: number) => void;
+  onReady: () => void;
+}) {
+  const { progress, active } = useProgress(); // global loader state (glTF/texture/HDR)
+  const [compile, setCompile] = useState(false);
+  const warm = useRef(0);
+  const done = useRef(false);
+  const warmCam = useRef<THREE.PerspectiveCamera | null>(null);
+  useEffect(() => {
+    onProgress(progress);
+  }, [progress, onProgress]);
+  useFrame(({ gl, scene, camera }) => {
+    if (!compile) {
+      // queue drained → start the warm-up passes next frame
+      if (!active && progress === 100) setCompile(true);
+      return;
+    }
+    if (done.current) return;
+    const i = warm.current++;
+    if (i < STOPS.length) {
+      // one hidden warm render from this stop's wide pose (one per frame keeps
+      // even the warm-up itself hitch-free)
+      if (!warmCam.current) warmCam.current = (camera as THREE.PerspectiveCamera).clone();
+      const cam = warmCam.current;
+      const s = STOPS[i];
+      cam.position.set(s.pos[0], s.pos[1], s.pos[2]);
+      cam.lookAt(s.look[0], s.look[1], s.look[2]);
+      cam.updateMatrixWorld();
+      gl.render(scene, cam);
+      return;
+    }
+    if (i >= STOPS.length + READY_SETTLE_FRAMES) {
+      done.current = true;
+      onReady();
+    }
+  });
+  return null;
 }
 
 /* StaticShadows: freeze the shadow maps. Nothing that casts shadow in this room ever
@@ -1667,6 +1722,8 @@ export type RoomSceneProps = {
   focus: number;
   onFocus: (i: number) => void;
   onActivate: (i: number) => void;
+  onProgress: (pct: number) => void; // loader progress 0–100 for the loading screen
+  onReady: () => void; // fired once: assets loaded + shaders compiled + warm frames done
 };
 
 export default function RoomScene({
@@ -1677,6 +1734,8 @@ export default function RoomScene({
   focus,
   onFocus,
   onActivate,
+  onProgress,
+  onReady,
 }: RoomSceneProps) {
   return (
     <Canvas
@@ -1704,6 +1763,7 @@ export default function RoomScene({
          fan's light kit as the warm shadow-casting overhead accent. The HDRI environment
          (same sky as the window view) gives the metals/glossies real reflections and a
          gentle image-based fill, so ambient/hemi are turned DOWN. Tune in a real browser. */}
+      <LoadGate onProgress={onProgress} onReady={onReady} />
       <StaticShadows />
       <ambientLight intensity={AMBIENT} color="#fff3dd" />
       <hemisphereLight args={["#cfe2ff", "#6b5138", HEMI]} />

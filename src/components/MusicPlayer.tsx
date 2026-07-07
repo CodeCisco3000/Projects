@@ -1,0 +1,114 @@
+"use client";
+
+/* =====================================================================
+   MusicPlayer.tsx — the "Now Playing" disc player (top-right HUD).
+   ---------------------------------------------------------------------
+   A Persona 5-inspired turntable card in the room's warm palette: a
+   spinning vinyl on the left (pure CSS — layered gradients for grooves,
+   a fixed specular sheen, a rotating label with a jagged red star; a
+   second WebGL context for a 90px HUD disc would be a perf smell), and
+   the track block on the right — bold condensed title, muted-red
+   accents, an animated equalizer, and a hover-expanded drawer with the
+   progress line, time and transport controls.
+
+   No audio ships (the actual track is copyrighted — this is a visual
+   player): play/pause drives the disc spin, EQ and simulated progress.
+   Drop a file into AUDIO_SRC later and the same state wires up for real.
+   ===================================================================== */
+
+import { useEffect, useState } from "react";
+import Image from "next/image";
+
+const TRACK = {
+  title: "Heartbreak",
+  artist: "Persona 5",
+  length: 268, // 4:28, per the design reference
+};
+const AUDIO_SRC = ""; // intentionally empty — see the header note
+
+const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+export default function MusicPlayer() {
+  const [playing, setPlaying] = useState(true);
+  const [t, setT] = useState(84); // start mid-song like a room you walked into
+
+  // simulated playback clock (becomes the real audio clock if AUDIO_SRC is set)
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => setT((cur) => (cur + 0.25) % TRACK.length), 250);
+    return () => clearInterval(id);
+  }, [playing]);
+
+  return (
+    <aside className={"mp" + (playing ? " playing" : "")} aria-label="Now playing">
+      {/* the deck: plinth + platter + vinyl (rotating, Phantom Thieves label) under a
+          fixed specular sheen, with a tonearm that lifts off the record on pause */}
+      <button
+        className="mp-deck"
+        onClick={() => setPlaying((p) => !p)}
+        aria-label={playing ? `Pause ${TRACK.title}` : `Play ${TRACK.title}`}
+        title={playing ? "Pause" : "Play"}
+      >
+        <span className="mp-vinyl" aria-hidden="true">
+          <span className="mp-label">
+            {/* unoptimized: a 21px decorative webp doesn't need the image pipeline */}
+            <Image className="mp-logo" src="/phantom-logo.webp" alt="" width={16} height={16} unoptimized draggable={false} />
+          </span>
+        </span>
+        <span className="mp-sheen" aria-hidden="true" />
+        <span className="mp-arm" aria-hidden="true">
+          <i />
+        </span>
+        <span className="mp-screw" aria-hidden="true" />
+      </button>
+
+      <div className="mp-body">
+        <p className="mp-kick">Now playing</p>
+        <p className="mp-title">{TRACK.title}</p>
+        <p className="mp-artist">{TRACK.artist}</p>
+
+        {/* equalizer — pauses with the disc */}
+        <div className="mp-eq" aria-hidden="true">
+          {Array.from({ length: 14 }, (_, i) => (
+            <i key={i} />
+          ))}
+        </div>
+      </div>
+
+      {/* hover-expanded drawer: spans the full card under deck + track block */}
+      <div className="mp-more">
+        <div className="mp-more-inner">
+          <div className="mp-progress" aria-hidden="true">
+            <span style={{ width: `${(t / TRACK.length) * 100}%` }} />
+          </div>
+          <div className="mp-row">
+            <span className="mp-time">
+              {fmt(t)} / {fmt(TRACK.length)}
+            </span>
+            <span className="mp-ctrl">
+              <button onClick={() => setT(0)} aria-label="Restart track">
+                <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1h1.6v10H2zM11 1v10L4.4 6z" fill="currentColor" /></svg>
+              </button>
+              <button
+                className="mp-play"
+                onClick={() => setPlaying((p) => !p)}
+                aria-label={playing ? "Pause" : "Play"}
+              >
+                {playing ? (
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1h3v10H2zM7 1h3v10H7z" fill="currentColor" /></svg>
+                ) : (
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1 11 6l-8.5 5z" fill="currentColor" /></svg>
+                )}
+              </button>
+              <button onClick={() => setT(0)} aria-label="Next track">
+                <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M8.4 1H10v10H8.4zM1 1l6.6 5L1 11z" fill="currentColor" /></svg>
+              </button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {AUDIO_SRC && <audio src={AUDIO_SRC} />}
+    </aside>
+  );
+}

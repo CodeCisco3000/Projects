@@ -15,10 +15,12 @@
    over unchanged.
    ===================================================================== */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { identity, stations, resumeOrder } from "@/content/site";
 import { STOPS } from "./roomStops";
+import LoadingScreen from "./LoadingScreen";
+import MusicPlayer from "./MusicPlayer";
 
 // the WebGL canvas is client-only — keep it off the server (Next 16 lazy-load guide)
 const RoomScene = dynamic(() => import("./RoomScene"), { ssr: false });
@@ -114,6 +116,38 @@ export default function Portfolio() {
   const [focus, setFocus] = useState(0);
   const [inspect, setInspect] = useState<number | null>(null); // stop index being inspected, or null
 
+  /* ---- loading curtain (LoadingScreen) ----
+     The room loads, compiles and warms up entirely behind an opaque curtain; input
+     stays gated until the scene is genuinely interaction-ready (RoomScene onReady),
+     so the first scroll feels identical to every scroll after it. */
+  const [loadPct, setLoadPct] = useState(0);      // loader progress for the curtain
+  const [roomReady, setRoomReady] = useState(false); // assets + shaders + warm frames done
+  const [curtain, setCurtain] = useState(true);   // curtain stays mounted until its fade ends
+  const readyRef = useRef(false);                 // mirror for the input handlers
+  // DEV: visit /?loader to hold the curtain open for design review
+  const [holdCurtain] = useState(
+    () => typeof window !== "undefined" && window.location.search.includes("loader"),
+  );
+  const handleReady = useCallback(() => {
+    if (!holdCurtain) setRoomReady(true);
+  }, [holdCurtain]);
+  // DEV: while /?loader holds the curtain, cycle a fake progress so the whole
+  // chase (start → gaining → caught) can be reviewed without reloading
+  useEffect(() => {
+    if (!holdCurtain) return;
+    let p = 0;
+    const id = setInterval(() => {
+      p = p >= 118 ? 0 : p + 1.2;
+      setLoadPct(Math.min(100, p));
+    }, 50);
+    return () => clearInterval(id);
+  }, [holdCurtain]);
+  useEffect(() => {
+    if (!roomReady) return;
+    readyRef.current = true;
+    document.body.classList.add("ready"); // scene settle + hint/read-cue reveal (globals.css)
+  }, [roomReady]);
+
   // imperative engine state the 3D rig reads each frame (no re-render per frame)
   const targetFRef = useRef(0);
   const curFRef = useRef(0);
@@ -164,9 +198,9 @@ export default function Portfolio() {
     const raf = requestAnimationFrame(() => setTimeout(lit, 80));
     // reveal even if the tab loads in the background (rAF throttled) so it never sits blank
     const litFallback = setTimeout(lit, 600);
-    const hintTimer = setTimeout(hideHint, 7000);
 
     const onKey = (e: KeyboardEvent) => {
+      if (!readyRef.current) return; // input stays gated until the curtain lifts
       if (e.key === "Escape") {
         if (inspectRef.current != null) setInspect(null);
         else if (resumeRef.current) setResumeOpen(false);
@@ -194,12 +228,19 @@ export default function Portfolio() {
     window.addEventListener("keydown", onKey);
     return () => {
       clearTimeout(litFallback);
-      clearTimeout(hintTimer);
       cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // the "scroll to look around" hint counts its 7 seconds from when the room is
+  // actually explorable (curtain lifted), not from page mount
+  useEffect(() => {
+    if (!roomReady) return;
+    const t = setTimeout(hideHint, 7000);
+    return () => clearTimeout(t);
+  }, [roomReady]);
 
   // scroll wheel over the canvas → step ONE stop per gesture (not continuous
   // scrubbing). A cooldown swallows the rapid burst of events a fast scroll fires,
@@ -210,6 +251,7 @@ export default function Portfolio() {
     if (!el) return;
     let lastStep = 0;
     const onWheel = (e: WheelEvent) => {
+      if (!readyRef.current) return; // gated until the curtain lifts
       if (resumeRef.current || inspectRef.current != null) return;
       e.preventDefault();
       const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
@@ -292,8 +334,18 @@ export default function Portfolio() {
           focus={focus}
           onFocus={setFocus}
           onActivate={onActivate}
+          onProgress={setLoadPct}
+          onReady={handleReady}
         />
       </div>
+
+      {/* ===== loading curtain — unmounts itself once its lift transition ends ===== */}
+      {curtain && (
+        <LoadingScreen progress={loadPct} ready={roomReady} onExited={() => setCurtain(false)} />
+      )}
+
+      {/* ===== "now playing" disc player — slides in after the curtain lifts ===== */}
+      <MusicPlayer />
 
       {/* ===== focus rail ===== */}
       <nav className="focusnav" aria-label="Focus points">

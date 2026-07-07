@@ -45,6 +45,14 @@ Third-party assets used in this site, with attribution as required by their lice
   ["Rubber fig potted plant"](https://poly.pizza/m/0Xbm2AznJWl) by Poly by Google,
   licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
 
+- **Ice skate (recolored white in code as figure skates)** — `public/models/decor/ice-skate.glb`
+  ["Ice skate"](https://poly.pizza/m/8M1k8XeHwhM) by jeremy,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
+- **Shoes (sneaker pair)** — `public/models/decor/sneakers.glb`
+  ["Shoes"](https://poly.pizza/m/0ASn5OTnrkz) by Poly by Google,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
 - **Simple soccer football** — `public/models/decor/soccer-ball.glb`
   ["Simple soccer football"](https://poly.pizza/m/57u6P7Sr7K0) by Smirnoff Alexander,
   licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).

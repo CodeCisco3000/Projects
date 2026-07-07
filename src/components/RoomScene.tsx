@@ -54,8 +54,10 @@ const COLOR = {
   back: "#c9b596",   // warm greige paint
   side: "#bda884",
   floor: "#6f4d30",  // warm wood
-  ceil: "#ddd4c2",   // ceiling tint — multiplies the clean plaster map; soft warm
+  ceil: "#eae3d5",   // ceiling tint — multiplies the clean plaster map; soft warm
                      // off-white so the ceiling reads light but recessive (lower = darker)
+  wall: "#eadfcc",   // warm cream multiplied onto the (neutral-grey) plaster maps —
+                     // this is what stops the walls reading cold blue-grey
   placard: "#241b13",
   ink: "#f2e7d6",
   accent: "#e7912f", // lamp amber
@@ -72,9 +74,9 @@ const COLOR = {
    ground the furniture. Budget: one 2048 + one 1024 shadow map, a 1k HDRI,
    a one-frame contact-shadow bake. */
 const EXPOSURE = 0.98; // global brightness, rolled off by ACES tone mapping
-const AMBIENT = 0.15;  // warm daylight fill (the HDRI env adds a little cool base fill on top) —
+const AMBIENT = 0.18;  // warm daylight fill (the HDRI env adds a little cool base fill on top) —
                        // just enough that shadow sides keep detail instead of crushing to black
-const HEMI = 0.32;     // sky/bounce fill (down from 0.45 — env + shadows carry more shape now)
+const HEMI = 0.36;     // sky/bounce fill (env + shadows carry the shape; this keeps corners alive)
 const SUN = 2.2;       // sunlight through the window. The sun light now sits OUTSIDE the window
                        // with decay 0 (parallel-sun feel, no distance falloff), so this is a small
                        // number — it multiplies straight onto the beam, not against attenuation
@@ -323,19 +325,19 @@ const Walls = memo(function Walls() {
          double-sided caster flip-lights its own interior face and self-shadow-acnes;
          the camera never leaves the room, so the outside face is never seen. */}
       <mesh position={[0, 0, -HZ]} geometry={backWallGeo} castShadow receiveShadow>
-        <meshStandardMaterial {...m.back} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.FrontSide} />
+        <meshStandardMaterial {...m.back} color={COLOR.wall} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} side={THREE.FrontSide} />
       </mesh>
       {/* left wall (shares the plaster maps + tiling with the right wall). All four
          surfaces below are FrontSide — the camera never leaves the room, so drawing
          their back faces (DoubleSide) was wasted rasterizer + lighting work. */}
       <mesh position={[-HX, 0, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[HZ * 2, HY * 2]} />
-        <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} />
+        <meshStandardMaterial {...m.side} color={COLOR.wall} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} />
       </mesh>
       {/* right wall */}
       <mesh position={[HX, 0, 0]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[HZ * 2, HY * 2]} />
-        <meshStandardMaterial {...m.side} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} />
+        <meshStandardMaterial {...m.side} color={COLOR.wall} normalScale={[WALL_NORMAL, WALL_NORMAL]} roughness={1} metalness={0} />
       </mesh>
       {/* floor — the main shadow catcher (sun beam + fan pool + furniture shadows) */}
       <mesh position={[0, -HY, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
@@ -1775,7 +1777,9 @@ export default function RoomScene({
       }}
     >
       <color attach="background" args={["#241c12"]} />
-      <fog attach="fog" args={["#241c12", 16, 40]} />
+      {/* fog pushed back (16→20 start) so it stops browning the ceiling at
+         normal tour distances — it now only softens the far corners */}
+      <fog attach="fog" args={["#241c12", 20, 55]} />
 
       {/* Two-source lighting, daytime edition (ADR-0012): warm sunlight beaming through the
          window is the key — now shadow-casting, shaped by the wall's window hole — with the
@@ -1785,7 +1789,10 @@ export default function RoomScene({
       <LoadGate onProgress={onProgress} onReady={onReady} />
       <StaticShadows />
       <ambientLight intensity={AMBIENT} color="#fff3dd" />
-      <hemisphereLight args={["#cfe2ff", "#6b5138", HEMI]} />
+      <hemisphereLight args={["#cfe2ff", "#7a5f42", HEMI]} />
+      {/* warm wash on the ceiling around the fan — real light kits throw up as
+         well as down, and without it the ceiling read as a brown cave */}
+      <pointLight position={[0, HY - 0.5, -1]} intensity={5} distance={4.5} decay={2} color="#ffd9a8" />
       <Suspense fallback={null}>
         <Environment files={ENV_URL} environmentIntensity={ENV_INTENSITY} />
       </Suspense>

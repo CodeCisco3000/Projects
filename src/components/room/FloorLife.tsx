@@ -137,11 +137,69 @@ function SkateBag(props: React.ComponentProps<"group">) {
   );
 }
 
+/* woven laundry basket with a hoodie flopped over the rim — fills the
+   front-right corner that read as dead space from the Contact stop */
+function LaundryBasket(props: React.ComponentProps<"group">) {
+  const weave = useMemo(() => {
+    const c = document.createElement("canvas");
+    c.width = 256;
+    c.height = 128;
+    const x = c.getContext("2d")!;
+    x.fillStyle = "#a8895c";
+    x.fillRect(0, 0, 256, 128);
+    // basket lattice: alternating over/under bands
+    for (let ry = 0; ry < 8; ry++) {
+      for (let rx = 0; rx < 16; rx++) {
+        x.fillStyle = (rx + ry) % 2 ? "#c2a473" : "#8f7141";
+        x.fillRect(rx * 16, ry * 16, 15, 15);
+      }
+    }
+    // shading grain
+    x.globalAlpha = 0.15;
+    x.fillStyle = "#000";
+    for (let i = 0; i < 128; i += 4) x.fillRect(0, i, 256, 1);
+    x.globalAlpha = 1;
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(3, 1);
+    return t;
+  }, []);
+  return (
+    <group {...props}>
+      <mesh position={[0, 0.55, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.62, 0.5, 1.1, 20, 1, true]} />
+        <meshStandardMaterial map={weave} roughness={0.9} metalness={0} side={THREE.DoubleSide} />
+      </mesh>
+      {/* basket floor + rim bead */}
+      <mesh position={[0, 0.02, 0]}>
+        <cylinderGeometry args={[0.5, 0.5, 0.04, 20]} />
+        <meshStandardMaterial color="#75592f" roughness={0.9} metalness={0} />
+      </mesh>
+      <mesh position={[0, 1.1, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+        <torusGeometry args={[0.62, 0.035, 8, 24]} />
+        <meshStandardMaterial color="#8a6f4a" roughness={0.85} metalness={0} />
+      </mesh>
+      {/* laundry inside + a sleeve flopped over the rim */}
+      <mesh position={[0.05, 1.02, -0.05]} scale={[1, 0.45, 1]}>
+        <sphereGeometry args={[0.52, 16, 12]} />
+        <meshStandardMaterial color="#93a3b5" roughness={1} metalness={0} />
+      </mesh>
+      <mesh position={[0.55, 0.98, 0.2]} rotation={[0, 0.3, -1.1]} scale={[1, 0.35, 0.5]} castShadow>
+        <capsuleGeometry args={[0.14, 0.5, 4, 10]} />
+        <meshStandardMaterial color="#7a2e35" roughness={1} metalness={0} />
+      </mesh>
+    </group>
+  );
+}
+
 const FloorLife = memo(function FloorLife() {
   return (
     <group>
       <Rug />
       <SkateBag position={[3.1, FLOOR_Y, -4.0]} rotation={[0, 0.5, 0]} />
+      {/* rotY π turns the flopped sleeve toward the room; 1.45 = real hamper height */}
+      <LaundryBasket position={[9.6, FLOOR_Y, 6.6]} rotation={[0, Math.PI, 0]} scale={1.45} />
       <Suspense fallback={null}>
         {/* white figure skates parked beside the desk's left end — one upright,
            one tipped a little as if just unlaced */}

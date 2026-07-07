@@ -23,6 +23,7 @@ import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
 import WallDecor from "./room/WallDecor";
 import Bookshelf from "./room/Bookshelf";
 import DecorModel from "./room/DecorModel";
+import BedsideDecor from "./room/BedsideDecor";
 import { MARKER_ART, makeArtTexture } from "./room/canvasArt";
 
 /* room half-extents (world units): walls at x=±HX, floor/ceiling at y=∓HY,
@@ -1800,6 +1801,7 @@ export default function RoomScene({
       <CrownMolding />
       <WallDecor />
       <Bookshelf />
+      <BedsideDecor />
 
       <Suspense fallback={null}>
         <Furniture />

@@ -33,6 +33,22 @@ Third-party assets used in this site, with attribution as required by their lice
   licensed under [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/), via [Sketchfab](https://sketchfab.com).
   (`chair-opt.glb`: 67 fragment meshes joined into one .glb with gltf-transform for draw-call performance; geometry unchanged.)
 
+- **T-Rex (shelf figurine)** — `public/models/decor/trex.glb`
+  ["T-Rex"](https://poly.pizza/m/9GyZw9gGPMq) by Poly by Google,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
+- **Diplodocus (shelf figurine)** — `public/models/decor/diplodocus.glb`
+  ["Diplodocus"](https://poly.pizza/m/12n6ICAVpYB) by Poly by Google,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
+- **Rubber fig potted plant** — `public/models/decor/rubber-fig.glb`
+  ["Rubber fig potted plant"](https://poly.pizza/m/0Xbm2AznJWl) by Poly by Google,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
+- **Simple soccer football** — `public/models/decor/soccer-ball.glb`
+  ["Simple soccer football"](https://poly.pizza/m/57u6P7Sr7K0) by Smirnoff Alexander,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
 ## Textures (CC0 — no attribution required, listed for provenance)
 
 - **Walls — painted plaster** (`public/textures/wall-*`): "PaintedPlaster017", [ambientCG](https://ambientcg.com), CC0.

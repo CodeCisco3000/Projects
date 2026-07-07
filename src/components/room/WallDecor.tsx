@@ -84,7 +84,7 @@ function FramedArt({
 function Scarf(props: React.ComponentProps<"group">) {
   const tex = useArt(scarfArt);
   const geo = useMemo(() => {
-    const W = 3.3, H = 0.44, SAG = 0.16, SEG = 24;
+    const W = 4.0, H = 0.5, SAG = 0.18, SEG = 24; // a real ~1 m match scarf
     const g = new THREE.PlaneGeometry(W, H, SEG, 1);
     const p = g.attributes.position;
     for (let i = 0; i < p.count; i++) {
@@ -101,7 +101,7 @@ function Scarf(props: React.ComponentProps<"group">) {
         <meshStandardMaterial map={tex} roughness={0.95} metalness={0} side={THREE.DoubleSide} />
       </mesh>
       {/* the two pins it hangs from */}
-      {[-1.62, 1.62].map((px, i) => (
+      {[-1.96, 1.96].map((px, i) => (
         <mesh key={i} position={[px, 0.2, 0.01]}>
           <cylinderGeometry args={[0.016, 0.016, 0.05, 10]} />
           <meshStandardMaterial color="#8f8f96" roughness={0.35} metalness={0.9} />
@@ -200,7 +200,7 @@ const WallDecor = memo(function WallDecor() {
         rotation={[0, Math.PI / 2, 0]}
       />
       {/* team scarf above the About placard */}
-      <Scarf position={[L + 0.01, 1.62, -1.5]} rotation={[0, Math.PI / 2, 0]} />
+      <Scarf position={[L + 0.01, 1.62, -1.35]} rotation={[0, Math.PI / 2, 0]} />
       {/* skating-gala poster toward the front of the wall */}
       <FramedArt
         painter={skatePosterArt}

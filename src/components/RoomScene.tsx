@@ -24,6 +24,7 @@ import WallDecor from "./room/WallDecor";
 import Bookshelf from "./room/Bookshelf";
 import DecorModel from "./room/DecorModel";
 import BedsideDecor from "./room/BedsideDecor";
+import DeskClutter from "./room/DeskClutter";
 import { MARKER_ART, makeArtTexture } from "./room/canvasArt";
 
 /* room half-extents (world units): walls at x=±HX, floor/ceiling at y=∓HY,
@@ -1802,14 +1803,15 @@ export default function RoomScene({
       <WallDecor />
       <Bookshelf />
       <BedsideDecor />
+      <DeskClutter />
 
       <Suspense fallback={null}>
         <Furniture />
         {/* floor-level life: a rubber fig softening the bare gap between the
            window and the PC tower, and the soccer ball resting by the bed's
            foot where it would actually get kicked off shoes */}
-        <DecorModel url="/models/decor/rubber-fig.glb" targetH={2.3} position={[1.25, -HY, -7.9]} rotY={0.4} />
-        <DecorModel url="/models/decor/soccer-ball.glb" targetH={0.42} position={[-3.1, -HY, 0.6]} rotY={1.1} />
+        <DecorModel url="/models/decor/rubber-fig.glb" targetH={4.6} position={[1.25, -HY, -7.9]} rotY={0.4} />
+        <DecorModel url="/models/decor/soccer-ball.glb" targetH={0.85} position={[-3.1, -HY, 0.6]} rotY={1.1} />
         {/* one-frame contact-shadow bake at floor level: soft ambient-occlusion-style
            grounding under the furniture where the two key lights don't reach. Mounted
            in the SAME Suspense as Furniture so the single bake frame runs only after

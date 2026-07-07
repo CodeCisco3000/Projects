@@ -21,8 +21,9 @@ const LAMP_LIGHT = 2.6;               // bedside pool brightness (0 = off)
 const LAMP_COLOR = "#ffc98f";         // warm 2700K-ish bulb
 
 function Lamp() {
+  // positioned + scaled by the wrapper group in BedsideDecor
   return (
-    <group position={LAMP_POS}>
+    <group>
       {/* weighted base + slim brass stem */}
       <mesh position={[0, 0.02, 0]} castShadow>
         <cylinderGeometry args={[0.13, 0.15, 0.04, 24]} />
@@ -113,7 +114,7 @@ function Phone(props: React.ComponentProps<"group">) {
     () =>
       new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3([
-          new THREE.Vector3(0, 0.012, 0.17),    // out of the phone's bottom edge
+          new THREE.Vector3(0, 0.012, 0.29),    // out of the phone's bottom edge
           new THREE.Vector3(0.3, 0.004, 0.24),  // slack across the tabletop
           new THREE.Vector3(0.55, -0.15, 0.22), // over the right side edge
           new THREE.Vector3(0.58, -1.9, 0.15),  // hanging down the open side
@@ -128,13 +129,13 @@ function Phone(props: React.ComponentProps<"group">) {
   );
   return (
     <group {...props}>
-      <mesh position={[0, 0.008, 0]} castShadow>
-        <boxGeometry args={[0.17, 0.016, 0.34]} />
+      <mesh position={[0, 0.012, 0]} castShadow>
+        <boxGeometry args={[0.28, 0.024, 0.56]} />
         <meshStandardMaterial color="#17181c" roughness={0.35} metalness={0.5} />
       </mesh>
       {/* sleeping screen with a faint clock glow */}
-      <mesh position={[0, 0.017, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[0.155, 0.325]} />
+      <mesh position={[0, 0.025, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.255, 0.53]} />
         <meshStandardMaterial color="#06070a" emissive="#2a3a55" emissiveIntensity={0.25} roughness={0.2} />
       </mesh>
       <mesh geometry={cable}>
@@ -145,11 +146,16 @@ function Phone(props: React.ComponentProps<"group">) {
 }
 
 const BedsideDecor = memo(function BedsideDecor() {
+  /* scales bring each prop to true size at the room's ~4 units/m (lamp
+     ~55 cm, paperback ~18 cm, bottle ~22 cm) — the phone keeps scale 1
+     because its cable's drape is authored in nightstand-world offsets */
   return (
     <group>
-      <Lamp />
-      <Paperback position={[-0.85, TOP_Y, -7.0]} rotation={[0, 0.28, 0]} />
-      <WaterBottle position={[-1.85, TOP_Y, -6.85]} />
+      <group position={LAMP_POS} scale={1.6}>
+        <Lamp />
+      </group>
+      <Paperback position={[-0.85, TOP_Y, -7.0]} rotation={[0, 0.28, 0]} scale={1.55} />
+      <WaterBottle position={[-1.88, TOP_Y, -6.85]} scale={2.1} />
       <Phone position={[-0.75, TOP_Y, -7.62]} rotation={[0, -0.12, 0]} />
     </group>
   );

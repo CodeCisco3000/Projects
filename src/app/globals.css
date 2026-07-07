@@ -54,9 +54,11 @@ a { color: inherit; }
 .scene {
   position: fixed; inset: 0; z-index: 0;
   background: radial-gradient(140% 120% at 38% 30%, #1c140d 0%, #0c0805 70%, #070402 100%);
-  opacity: 0; transition: opacity 1.1s var(--ease);   /* intro reveal once mounted */
+  opacity: 0; transform: scale(1.045);  /* held slightly wide behind the curtain… */
+  transition: opacity 1.1s var(--ease), transform 2s var(--ease);
 }
-body.lit .scene { opacity: 1; }
+body.lit .scene { opacity: 1; }         /* fades in early, hidden behind the curtain */
+body.ready .scene { transform: none; }  /* …then settles as the curtain lifts (cinematic push-in) */
 .scene canvas { display: block; touch-action: none; outline: none; }
 /* evening vignette over the canvas → seats the room in darkness (non-interactive) */
 .scene::after {
@@ -123,8 +125,8 @@ body.lit .scene { opacity: 1; }
   font-family: var(--r-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
   display: flex; flex-direction: column; align-items: center; gap: 9px; opacity: 0; transition: opacity 0.6s;
 }
-body.lit .hint { opacity: 1; }
-.hint.gone { opacity: 0 !important; pointer-events: none; }
+body.ready .hint { opacity: 1; transition-delay: 1s; } /* arrives after the curtain lifts */
+.hint.gone { opacity: 0 !important; pointer-events: none; transition-delay: 0s; }
 .hint .wheel {
   width: 22px; height: 34px; border: 1.5px solid var(--line-soft); border-radius: 12px; position: relative;
 }
@@ -143,7 +145,7 @@ body.lit .hint { opacity: 1; }
   box-shadow: 0 8px 22px -8px rgba(231, 145, 47, 0.6);
   opacity: 0; pointer-events: none; transition: opacity 0.4s var(--ease), transform 0.25s var(--ease), filter 0.2s;
 }
-body.lit .read-cue { opacity: 0.95; pointer-events: auto; }
+body.ready .read-cue { opacity: 0.95; pointer-events: auto; transition-delay: 1s, 0s, 0s; }
 .read-cue:hover { transform: translateX(-50%) translateY(-1px); filter: brightness(1.05); }
 .read-cue:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
@@ -268,4 +270,281 @@ body.inspecting .focusnav, body.inspecting .hint, body.inspecting .read-cue { op
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001s !important; }
   .scene, .btn-resume { transition-duration: 0.2s !important; }
+}
+
+/* ============ Loading curtain — the entry title screen (LoadingScreen.tsx) ============
+   Hides ALL asset loading behind a warm near-black curtain in the room's own palette.
+   Sits above every overlay (z 95) incl. the grain (60), so it carries its own grain +
+   vignette for film continuity. Lift = opacity + soft blur; the scene scale-settles
+   underneath it (see .scene). */
+.loader {
+  position: fixed; inset: 0; z-index: 95; display: grid; place-items: center;
+  background: radial-gradient(120% 100% at 34% 26%, #241a10 0%, #140e08 52%, #0a0603 100%);
+  transition: opacity 1.15s var(--ease), filter 1.15s var(--ease);
+}
+.loader.lift { opacity: 0; filter: blur(6px); pointer-events: none; }
+.loader::before { /* evening vignette — center glows, corners seat into darkness */
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(115% 95% at 50% 42%, transparent 40%, rgba(5, 3, 1, 0.55) 88%);
+}
+.loader::after { /* same film grain sheet as .grain */
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.35; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/></svg>");
+}
+
+/* slow-breathing pool of lamplight behind the type — the fan light before the fan */
+.ld-glow {
+  position: absolute; left: 50%; top: 44%; width: min(72vw, 900px); aspect-ratio: 1.5;
+  transform: translate(-50%, -50%); filter: blur(30px);
+  background: radial-gradient(50% 50% at 50% 50%, rgba(231, 145, 47, 0.13), transparent 70%);
+  animation: ld-breathe 6.5s var(--ease) infinite alternate;
+}
+@keyframes ld-breathe {
+  from { opacity: 0.7; transform: translate(-50%, -50%) scale(0.96); }
+  to   { opacity: 1;   transform: translate(-50%, -50%) scale(1.05); }
+}
+
+/* floating dust motes, like the room's air caught in the lamplight */
+.ld-dust { position: absolute; inset: 0; pointer-events: none; } /* out of flow — must not push the title stack */
+.ld-dust i {
+  position: absolute; width: 3px; height: 3px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(242, 231, 214, 0.8), transparent 70%);
+  opacity: 0; animation: ld-float 9s linear infinite;
+}
+.ld-dust i:nth-child(1) { left: 24%; top: 62%; animation-delay: 0s; }
+.ld-dust i:nth-child(2) { left: 38%; top: 30%; animation-delay: 1.6s; animation-duration: 11s; }
+.ld-dust i:nth-child(3) { left: 52%; top: 72%; animation-delay: 3.1s; }
+.ld-dust i:nth-child(4) { left: 64%; top: 26%; animation-delay: 0.9s; animation-duration: 12s; }
+.ld-dust i:nth-child(5) { left: 74%; top: 58%; animation-delay: 4.2s; }
+.ld-dust i:nth-child(6) { left: 31%; top: 44%; animation-delay: 5.4s; animation-duration: 10s; }
+.ld-dust i:nth-child(7) { left: 82%; top: 40%; animation-delay: 2.3s; }
+@keyframes ld-float {
+  0%   { opacity: 0; transform: translateY(12px); }
+  12%  { opacity: 0.5; }
+  85%  { opacity: 0.35; }
+  100% { opacity: 0; transform: translateY(-46px); }
+}
+
+/* the title stack — staged entrance, same hierarchy as the résumé head */
+.ld-center {
+  position: relative; display: grid; justify-items: center; text-align: center; padding: 0 24px;
+  transform: translateY(-4vh); /* optical center sits a touch above geometric center */
+}
+.ld-kick {
+  font-family: var(--r-mono); font-size: 10.5px; letter-spacing: 0.34em; text-transform: uppercase;
+  color: var(--accent); animation: ld-rise 0.9s var(--ease) both 0.1s;
+}
+.ld-name {
+  font-family: var(--r-display); font-weight: 700; font-size: clamp(36px, 6.5vw, 66px);
+  letter-spacing: -0.03em; line-height: 1; margin-top: 16px; animation: ld-rise 0.9s var(--ease) both 0.22s;
+}
+.ld-sub {
+  font-family: var(--r-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted); margin-top: 15px; animation: ld-rise 0.9s var(--ease) both 0.34s;
+}
+
+/* progress = a hairline that fills with lamp amber; counter in the corner of the line */
+.ld-progress { width: min(420px, 64vw); margin-top: 46px; animation: ld-rise 0.9s var(--ease) both 0.5s; }
+.ld-line { height: 1px; background: var(--hair); }
+.ld-line span {
+  display: block; height: 100%; transform-origin: left; transform: scaleX(0);
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  box-shadow: 0 0 12px rgba(231, 145, 47, 0.55);
+  transition: transform 0.55s var(--ease);
+}
+.ld-meta {
+  display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px;
+  font-family: var(--r-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); opacity: 0.85; /* one step quieter than the title stack */
+}
+.ld-pct::after { content: "%"; opacity: 0.6; margin-left: 1px; }
+@keyframes ld-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ld-glow, .ld-dust i { animation: none; }
+  .ld-dust i { opacity: 0.25; }
+  .ld-kick, .ld-name, .ld-sub, .ld-progress { animation-duration: 0.01s; }
+  .loader { transition-duration: 0.4s; }
+  .scene { transform: none; }
+}
+
+/* ---- the 8-bit dino chase riding the progress line (PixelChase.tsx) ----
+   Two-frame run gait: frame groups A/B alternate via opposite-phase keyframes;
+   a 2px bob on the whole dino sells the sprint. Positions come from the eased
+   loader progress every frame, so no left-transition is needed. */
+.ld-chase { position: relative; height: 36px; margin-bottom: 4px; }
+.ld-dino {
+  position: absolute; bottom: -1px; /* feet touch the hairline ground */
+  animation: ld-bob 0.36s steps(2, jump-none) infinite;
+}
+.ld-dino svg { display: block; }
+.ld-fA { animation: ld-gait 0.36s linear infinite; }
+.ld-fB { animation: ld-gait 0.36s linear infinite; animation-delay: -0.18s; }
+@keyframes ld-gait { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes ld-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+/* dinner is served — freeze the sprint on frame A */
+.ld-caught .ld-dino { animation: none; }
+.ld-caught .ld-fA { animation: none; opacity: 1; }
+.ld-caught .ld-fB { animation: none; opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .ld-dino, .ld-fA, .ld-fB { animation: none; }
+  .ld-fB { opacity: 0; }
+}
+
+/* ============ "Now playing" disc player (MusicPlayer.tsx) ============
+   A miniature turntable in the room's palette, Persona-5 energy in the type +
+   muted deep red: plinth deck with a spinning Phantom-Thieves vinyl and a
+   tonearm that LIFTS off the record on pause, track block beside it, and a
+   full-width hover drawer (progress/time/transport). The sharp cut on the
+   bottom-right corner is the single P5 shape gesture — drop-shadow() (not
+   box-shadow) so the shadow follows the clipped silhouette. Sits top-LEFT
+   under the brand block; slides in once the curtain lifts (body.ready). */
+.mp {
+  position: fixed; top: 78px; left: 26px; z-index: 47;
+  display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 10px;
+  width: 178px; padding: 8px 10px;
+  background: linear-gradient(135deg, rgba(31, 23, 16, 0.93), rgba(16, 11, 7, 0.95));
+  border: 1px solid var(--line-soft); border-radius: 6px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+  filter: drop-shadow(0 14px 22px rgba(0, 0, 0, 0.55));
+  backdrop-filter: blur(6px);
+  opacity: 0; transform: translateX(-18px); pointer-events: none;
+  transition: opacity 0.7s var(--ease), transform 0.7s var(--ease), filter 0.3s var(--ease);
+}
+body.ready .mp { opacity: 1; transform: none; pointer-events: auto; transition-delay: 1.35s, 1.35s, 0s; }
+.mp:hover { filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.7)); }
+
+/* --- the deck: a brushed plinth carrying the platter + vinyl; grooves and the
+       Phantom Thieves label rotate, the specular sheen stays fixed (light
+       doesn't spin with the record), the tonearm rests on the groove --- */
+.mp-deck {
+  position: relative; width: 54px; height: 54px; flex: none; grid-row: 1;
+  border: 0; padding: 0; cursor: pointer; border-radius: 7px;
+  background: linear-gradient(145deg, #26272d, #121317);
+  box-shadow: inset 0 0 0 1px rgba(231, 214, 186, 0.07), inset 0 -6px 10px -8px #000,
+    0 5px 12px -5px rgba(0, 0, 0, 0.85);
+}
+.mp-deck:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.mp-screw { /* corner knob, like the reference deck */
+  position: absolute; left: 4px; bottom: 4px; width: 5px; height: 5px; border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #9aa0a8, #3c3f45 75%);
+}
+.mp-vinyl {
+  position: absolute; inset: 4px; border-radius: 50%; display: grid; place-items: center;
+  background: repeating-radial-gradient(circle at 50% 50%, #0b0b0d 0 1.3px, #17171b 1.3px 2.6px);
+  box-shadow: inset 0 0 0 1px rgba(231, 214, 186, 0.09), 0 3px 9px -3px rgba(0, 0, 0, 0.85);
+  animation: mp-spin 3.6s linear infinite;
+  animation-play-state: paused;
+}
+.mp.playing .mp-vinyl { animation-play-state: running; }
+@keyframes mp-spin { to { transform: rotate(360deg); } }
+.mp-label {
+  position: relative; width: 21px; height: 21px; border-radius: 50%; overflow: hidden;
+  display: grid; place-items: center;
+  background: radial-gradient(circle at 40% 32%, #b0362a, #8e2a20 72%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.mp-logo { width: 16px; height: 16px; object-fit: contain; user-select: none; }
+.mp-label::after { /* spindle */
+  content: ""; position: absolute; width: 3px; height: 3px; border-radius: 50%;
+  background: #0b0b0d; box-shadow: 0 0 0 1px rgba(242, 231, 214, 0.25);
+}
+.mp.playing .mp-label { animation: mp-pulse 2.6s ease-in-out infinite; }
+@keyframes mp-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 0 0 rgba(201, 80, 63, 0); }
+  50% { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 12px 1px rgba(201, 80, 63, 0.35); }
+}
+.mp-sheen {
+  position: absolute; inset: 4px; border-radius: 50%; pointer-events: none;
+  background:
+    radial-gradient(circle at 32% 26%, rgba(242, 231, 214, 0.15), transparent 42%),
+    conic-gradient(from 210deg, transparent 0 40%, rgba(242, 231, 214, 0.06) 47%, transparent 55%, transparent 78%, rgba(242, 231, 214, 0.05) 86%, transparent 92%);
+}
+/* tonearm: pivot pinned top-right of the plinth; the arm swings ONTO the
+   record while playing and lifts away on pause */
+.mp-arm {
+  position: absolute; top: 1px; right: 1px; width: 9px; height: 9px; border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #565b63, #1a1b20 78%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.mp-arm i {
+  position: absolute; left: 50%; top: 50%; width: 2px; height: 26px; margin-left: -1px;
+  background: linear-gradient(#cfd3d9, #8d9097);
+  border-radius: 2px; transform-origin: top center;
+  transform: rotate(26deg); transition: transform 0.55s var(--ease);
+}
+.mp-arm i::after { /* headshell */
+  content: ""; position: absolute; left: 50%; bottom: -1px; width: 5px; height: 7px;
+  transform: translateX(-50%); border-radius: 2px;
+  background: linear-gradient(#3b3e45, #16171b);
+}
+.mp:not(.playing) .mp-arm i { transform: rotate(-9deg); } /* lifted off the record */
+
+/* --- track block --- */
+.mp-body { min-width: 0; grid-row: 1; }
+.mp-kick { font-family: var(--r-mono); font-size: 7px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--muted); opacity: 0.8; }
+.mp-title {
+  font-family: var(--r-display); font-weight: 700; font-style: italic; /* the P5 lean */
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.01em; line-height: 1.05;
+  color: var(--ink); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mp-artist {
+  font-family: var(--r-mono); font-size: 7.5px; font-weight: 700; letter-spacing: 0.18em;
+  text-transform: uppercase; color: #c9503f; margin-top: 2px;
+}
+
+/* --- equalizer: 14 bars on offset clocks; freezes with the disc --- */
+.mp-eq { display: flex; align-items: flex-end; gap: 2px; height: 8px; margin-top: 5px; }
+.mp-eq i {
+  width: 2px; height: 100%; transform-origin: bottom; transform: scaleY(0.15);
+  background: linear-gradient(to top, #8e2a20, #c9503f);
+  animation: mp-eq 0.9s ease-in-out infinite alternate; animation-play-state: paused;
+}
+.mp.playing .mp-eq i { animation-play-state: running; }
+@keyframes mp-eq { from { transform: scaleY(0.12); } to { transform: scaleY(1); } }
+.mp-eq i:nth-child(1)  { animation-duration: 0.74s; animation-delay: -0.31s; }
+.mp-eq i:nth-child(2)  { animation-duration: 0.92s; animation-delay: -0.75s; }
+.mp-eq i:nth-child(3)  { animation-duration: 0.68s; animation-delay: -0.12s; }
+.mp-eq i:nth-child(4)  { animation-duration: 1.04s; animation-delay: -0.56s; }
+.mp-eq i:nth-child(5)  { animation-duration: 0.81s; animation-delay: -0.92s; }
+.mp-eq i:nth-child(6)  { animation-duration: 0.95s; animation-delay: -0.24s; }
+.mp-eq i:nth-child(7)  { animation-duration: 0.71s; animation-delay: -0.63s; }
+.mp-eq i:nth-child(8)  { animation-duration: 1.08s; animation-delay: -0.42s; }
+.mp-eq i:nth-child(9)  { animation-duration: 0.77s; animation-delay: -0.85s; }
+.mp-eq i:nth-child(10) { animation-duration: 0.9s;  animation-delay: -0.18s; }
+.mp-eq i:nth-child(11) { animation-duration: 0.66s; animation-delay: -0.51s; }
+.mp-eq i:nth-child(12) { animation-duration: 1.02s; animation-delay: -0.98s; }
+.mp-eq i:nth-child(13) { animation-duration: 0.84s; animation-delay: -0.35s; }
+.mp-eq i:nth-child(14) { animation-duration: 0.73s; animation-delay: -0.7s; }
+
+/* --- hover / focus expanded drawer: spans the full card width --- */
+.mp-more { grid-column: 1 / -1; display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.45s var(--ease); }
+.mp:hover .mp-more, .mp:focus-within .mp-more { grid-template-rows: 1fr; }
+.mp-more-inner { overflow: hidden; min-height: 0; }
+.mp-progress { height: 2px; background: var(--hair); margin-top: 9px; }
+.mp-progress span {
+  display: block; height: 100%; background: linear-gradient(90deg, #8e2a20, #c9503f);
+  box-shadow: 0 0 8px rgba(201, 80, 63, 0.5); transition: width 0.3s linear;
+}
+.mp-row { display: flex; justify-content: space-between; align-items: center; margin-top: 7px; }
+.mp-time { font-family: var(--r-mono); font-size: 8px; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; }
+.mp-ctrl { display: flex; gap: 2px; }
+.mp-ctrl button {
+  width: 18px; height: 18px; display: grid; place-items: center; background: none; border: 0;
+  color: var(--muted); cursor: pointer; border-radius: 3px; transition: color 0.2s, transform 0.2s;
+}
+.mp-ctrl button:hover { color: var(--ink); transform: translateY(-1px); }
+.mp-ctrl button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mp-ctrl button svg { width: 9px; height: 9px; }
+.mp-ctrl .mp-play { color: #c9503f; }
+
+@media (max-width: 900px) {
+  .mp { width: 162px; top: 72px; left: 18px; column-gap: 8px; }
+  .mp-deck { width: 48px; height: 48px; }
+  .mp-title { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-vinyl, .mp-label, .mp-eq i { animation: none !important; }
+  .mp-eq i { transform: scaleY(0.4); }
+  .mp-arm i { transition: none; }
 }

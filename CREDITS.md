@@ -57,6 +57,10 @@ Third-party assets used in this site, with attribution as required by their lice
   ["Simple soccer football"](https://poly.pizza/m/57u6P7Sr7K0) by Smirnoff Alexander,
   licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
 
+- **Book Encyclopedia Set 01 (CC0)** — `public/models/polyhaven/book_encyclopedia_set_01/`
+  ["Book Encyclopedia Set 01"](https://polyhaven.com/a/book_encyclopedia_set_01) by John Malcolm,
+  [Poly Haven](https://polyhaven.com), CC0. (2K glTF export; 20 volumes used across the bookcase bays.)
+
 ## Textures (CC0 — no attribution required, listed for provenance)
 
 - **Walls — painted plaster** (`public/textures/wall-*`): "PaintedPlaster017", [ambientCG](https://ambientcg.com), CC0.

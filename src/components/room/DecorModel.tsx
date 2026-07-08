@@ -14,6 +14,7 @@
 import { useMemo } from "react";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
+import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 export default function DecorModel({
   url,
@@ -21,6 +22,7 @@ export default function DecorModel({
   position = [0, 0, 0],
   rotY = 0,
   darkToColor,
+  figurine = false,
 }: {
   url: string;
   targetH: number; // world-unit height to scale the model to
@@ -31,11 +33,52 @@ export default function DecorModel({
      laces and other light parts keep their own colors. Materials are
      cloned so useGLTF's shared cache is never mutated. */
   darkToColor?: string;
+  /* "painted resin collectible" finish for low-poly models: welds the
+     flat-shaded triangle soup back together, recomputes smooth normals
+     (kills the faceted CG look), and swaps materials for a subtle
+     clearcoat — reads like a hand-painted figurine instead of a mesh. */
+  figurine?: boolean;
 }) {
   const { scene } = useGLTF(url);
   const [px, py, pz] = position;
   const node = useMemo(() => {
     const o = scene.clone(true);
+    if (figurine) {
+      const geoSeen = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
+      const matSeen = new Map<THREE.Material, THREE.Material>();
+      o.traverse((c) => {
+        const mesh = c as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        let g = geoSeen.get(mesh.geometry);
+        if (!g) {
+          // drop baked flat normals FIRST or mergeVertices can't weld
+          // (it only merges vertices whose every attribute matches)
+          g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+          g.deleteAttribute("normal");
+          g = mergeVertices(g, 1e-4);
+          g.computeVertexNormals();
+          geoSeen.set(mesh.geometry, g);
+        }
+        mesh.geometry = g;
+        const glaze = (m: THREE.Material) => {
+          let cl = matSeen.get(m);
+          if (!cl) {
+            const sm = m as THREE.MeshStandardMaterial;
+            cl = new THREE.MeshPhysicalMaterial({
+              color: sm.color ? sm.color.clone() : new THREE.Color("#888"),
+              map: sm.map ?? null,
+              roughness: 0.38,
+              metalness: 0,
+              clearcoat: 0.5,
+              clearcoatRoughness: 0.28,
+            });
+            matSeen.set(m, cl);
+          }
+          return cl;
+        };
+        mesh.material = Array.isArray(mesh.material) ? mesh.material.map(glaze) : glaze(mesh.material);
+      });
+    }
     if (darkToColor) {
       const hsl = { h: 0, s: 0, l: 0 };
       const seen = new Map<THREE.Material, THREE.Material>();
@@ -80,7 +123,7 @@ export default function DecorModel({
       }
     });
     return o;
-  }, [scene, targetH, rotY, px, py, pz, darkToColor]);
+  }, [scene, targetH, rotY, px, py, pz, darkToColor, figurine]);
   return <primitive object={node} />;
 }
 

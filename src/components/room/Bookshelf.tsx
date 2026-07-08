@@ -17,7 +17,9 @@
 
 import { memo, Suspense, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
+import { useGLTF, useTexture } from "@react-three/drei";
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import DecorModel from "./DecorModel";
 
 /* ---- placement knobs (world units; wall at x=-11, floor at y=-5) ---- */
@@ -62,10 +64,13 @@ function buildBooks(): Inst[] {
   const rnd = mulberry32(20260706);
   const out: Inst[] = [];
   const innerW = SHELF_W - 0.16;
+  /* the colored paperbacks start AFTER each bay's photoscanned encyclopedia
+     run (EncyclopediaBooks packs from the left edge); bay 4's left half is
+     the dino display */
+  const bayStart: Record<number, number> = { 1: -0.35, 2: -0.3, 3: -0.7, 4: 0.12 };
   for (let bay = 1; bay <= 4; bay++) {
     const shelfY = 0.08 + bay * (BAY_H + BOARD_T); // top surface of this bay's board
-    // bay 4 keeps its left half clear — that's the dino figurines' display spot
-    let x = bay === 4 ? 0.12 : -innerW / 2 + 0.04;
+    let x = bayStart[bay];
     while (x < innerW / 2 - 0.1) {
       // start a run of 3–9 books, then leave a gap (or something else's spot)
       const run = 3 + Math.floor(rnd() * 7);
@@ -106,43 +111,138 @@ function buildBooks(): Inst[] {
 }
 
 function Books() {
-  const ref = useRef<THREE.InstancedMesh>(null);
   const books = useMemo(buildBooks, []);
+  /* two instanced draws: soft-edged covers (per-instance color) + slightly
+     inset cream page blocks. The visible page tops between cover edges are
+     what stops the books reading as painted boxes. */
+  const coverGeo = useMemo(() => new RoundedBoxGeometry(1, 1, 1, 2, 0.045), []);
   const setup = useMemo(() => {
-    // bake transforms/colors into buffers once; applied via the ref callback
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const e = new THREE.Euler();
     const v = new THREE.Vector3();
     const s = new THREE.Vector3();
     const col = new THREE.Color();
-    return (mesh: THREE.InstancedMesh | null) => {
+    return (mesh: THREE.InstancedMesh | null, pages: boolean) => {
       if (!mesh) return;
       books.forEach((b, i) => {
         e.set(0, 0, b.rotZ);
-        m.compose(v.set(...b.pos), q.setFromEuler(e), s.set(...b.scale));
+        if (pages) {
+          // page core: thinner than the covers, shorter, recessed off the
+          // spine face (z offset is rotZ-invariant — rotZ spins around Z)
+          m.compose(
+            v.set(b.pos[0], b.pos[1], b.pos[2] - b.scale[2] * 0.045),
+            q.setFromEuler(e),
+            s.set(b.scale[0] * 0.74, b.scale[1] * 0.965, b.scale[2] * 0.92),
+          );
+        } else {
+          m.compose(v.set(...b.pos), q.setFromEuler(e), s.set(...b.scale));
+        }
         mesh.setMatrixAt(i, m);
-        mesh.setColorAt(i, col.set(b.color));
+        if (!pages) mesh.setColorAt(i, col.set(b.color));
       });
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     };
   }, [books]);
   return (
-    <instancedMesh
-      ref={(mesh) => {
-        ref.current = mesh;
-        setup(mesh);
-      }}
-      args={[undefined, undefined, books.length]}
-      castShadow
-      receiveShadow
-    >
-      <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial roughness={0.82} metalness={0} />
-    </instancedMesh>
+    <>
+      <instancedMesh
+        ref={(mesh) => setup(mesh, false)}
+        args={[undefined, undefined, books.length]}
+        geometry={coverGeo}
+        castShadow
+        receiveShadow
+      >
+        <meshStandardMaterial roughness={0.78} metalness={0} />
+      </instancedMesh>
+      <instancedMesh
+        ref={(mesh) => setup(mesh, true)}
+        args={[undefined, undefined, books.length]}
+        receiveShadow
+      >
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#e6ddc6" roughness={0.95} metalness={0} />
+      </instancedMesh>
+    </>
   );
 }
+
+/* ---------- the photoscanned encyclopedia volumes (Poly Haven, CC0) ----------
+   20 individually-noded leather volumes with gold-embossed 2K spines. Runs
+   pack left-to-right from each bay's left edge using each volume's real
+   measured thickness; bay 2 gets a leaner resting against its run. This is
+   the realism anchor of the whole bookcase — the procedural paperbacks
+   inherit believability by sitting next to them. */
+const ENCYC_URL = "/models/polyhaven/book_encyclopedia_set_01/book_encyclopedia_set_01.gltf";
+const ENCYC_SCALE = 4; // the set is authored in meters; the room is ~4 units/m
+
+function EncyclopediaBooks() {
+  const { scene } = useGLTF(ENCYC_URL);
+  const volumes = useMemo(() => {
+    // sharpen the shared spine textures once (clone-free: anisotropy only)
+    scene.traverse((c) => {
+      const mesh = c as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        const sm = m as THREE.MeshStandardMaterial;
+        for (const t of [sm.map, sm.normalMap, sm.roughnessMap]) {
+          if (t && t.anisotropy < 8) {
+            t.anisotropy = 8;
+            t.needsUpdate = true;
+          }
+        }
+      }
+    });
+    const bays: { bay: number; vols: number[]; leaner?: number }[] = [
+      { bay: 1, vols: [1, 2, 3, 4, 5, 6, 7, 8] },
+      { bay: 2, vols: [9, 10, 11, 12, 13, 14], leaner: 15 },
+      { bay: 3, vols: [16, 17, 18, 19, 20] },
+    ];
+    const out: THREE.Object3D[] = [];
+    const fit = (vol: number, bay: number, cursor: number, lean: number) => {
+      const src = scene.getObjectByName(`book_encyclopedia_set_01_book${String(vol).padStart(2, "0")}`);
+      if (!src) return cursor;
+      const o = src.clone(true);
+      o.position.set(0, 0, 0);
+      o.rotation.set(0, 0, lean);
+      o.scale.setScalar(ENCYC_SCALE);
+      o.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(o);
+      const w = box.max.x - box.min.x;
+      const shelfY = 0.08 + bay * (BAY_H + BOARD_T);
+      o.position.set(
+        cursor - box.min.x,          // pack against the cursor
+        shelfY - box.min.y,          // base on the shelf board
+        0.05 - (box.min.z + box.max.z) / 2, // pulled a touch toward the front edge
+      );
+      o.traverse((c) => {
+        if ((c as THREE.Mesh).isMesh) {
+          c.castShadow = true;
+          c.receiveShadow = true;
+        }
+      });
+      out.push(o);
+      return cursor + w + 0.008;
+    };
+    for (const row of bays) {
+      let cursor = -1.46;
+      for (const v of row.vols) cursor = fit(v, row.bay, cursor, 0);
+      // the leaner slumps against the end of its run (+rotZ tips the top
+      // toward -x, i.e. onto the last upright volume)
+      if (row.leaner) fit(row.leaner, row.bay, cursor + 0.02, 0.38);
+    }
+    return out;
+  }, [scene]);
+  return (
+    <>
+      {volumes.map((o, i) => (
+        <primitive key={i} object={o} />
+      ))}
+    </>
+  );
+}
+useGLTF.preload(ENCYC_URL);
 
 /* a soccer trophy: marble base, gold stem + cup (lathe), two loop handles */
 function Trophy({ h = 0.5, ...props }: { h?: number } & React.ComponentProps<"group">) {
@@ -336,10 +436,22 @@ const Bookshelf = memo(function Bookshelf() {
     for (let i = 1; i <= SHELF_COUNT; i++) ys.push(0.08 + i * (BAY_H + BOARD_T) - BOARD_T / 2);
     return ys;
   }, []);
-  const woodMat = useMemo(
-    () => new THREE.MeshStandardMaterial({ color: WOOD, roughness: 0.58, metalness: 0 }),
-    [],
-  );
+  // the floor's roughness map (linear data) breaks up the carcass sheen so
+  // the flat walnut boards stop reading as untextured CG plastic
+  const roughSrc = useTexture("/textures/floor-roughness.jpg");
+  const woodMat = useMemo(() => {
+    const rough = roughSrc.clone();
+    rough.colorSpace = THREE.NoColorSpace;
+    rough.wrapS = rough.wrapT = THREE.RepeatWrapping;
+    rough.repeat.set(1.6, 1.6);
+    rough.needsUpdate = true;
+    return new THREE.MeshStandardMaterial({
+      color: WOOD,
+      roughness: 0.75, // multiplied by the map's variation
+      roughnessMap: rough,
+      metalness: 0,
+    });
+  }, [roughSrc]);
   const innerW = SHELF_W - 0.16;
   return (
     /* local space: origin at the unit's floor center, +Z faces into the room;
@@ -385,17 +497,21 @@ const Bookshelf = memo(function Bookshelf() {
          T. rex prowls the top surface beside the record player; the
          diplodocus holds bay 4's display half. */}
       <Suspense fallback={null}>
+        {/* photoscanned leather volumes anchor bays 1–3 */}
+        <EncyclopediaBooks />
         <DecorModel
           url="/models/decor/trex.glb"
           targetH={0.48}
           position={[-1.05, SHELF_H, 0.05]}
           rotY={0.3}
+          figurine
         />
         <DecorModel
           url="/models/decor/diplodocus.glb"
           targetH={0.34}
           position={[-0.45, 0.08 + 4 * (BAY_H + BOARD_T), 0.06]}
           rotY={-0.2}
+          figurine
         />
       </Suspense>
     </group>

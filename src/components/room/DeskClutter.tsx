@@ -18,42 +18,108 @@ import * as THREE from "three";
 
 const TOP_Y = -2.13; // desk top surface (measured)
 
-/* over-ear headphones resting on a desk stand */
+/* over-ear headphones on a desk stand — built like the real thing: a
+   flattened headband arc with an under-cushion, brushed-steel yokes, deep
+   lathe-turned cup shells with plush cushion rings, and a cable dropping
+   to the desk. High segment counts + a clearcoat shell material are what
+   separate this from the primitive-toy first pass. */
 function Headphones(props: React.ComponentProps<"group">) {
+  const mats = useMemo(
+    () => ({
+      shell: new THREE.MeshPhysicalMaterial({
+        color: "#1a1c21",
+        roughness: 0.42,
+        metalness: 0,
+        clearcoat: 0.4,
+        clearcoatRoughness: 0.3,
+      }),
+      cushion: new THREE.MeshStandardMaterial({ color: "#0e0f13", roughness: 0.97, metalness: 0 }),
+      metal: new THREE.MeshStandardMaterial({ color: "#9a9da4", roughness: 0.28, metalness: 0.95 }),
+      matte: new THREE.MeshStandardMaterial({ color: "#212329", roughness: 0.6, metalness: 0.15 }),
+    }),
+    [],
+  );
+  /* cup shell: a smooth turned dome, rim → back, lying on its side */
+  const cupGeo = useMemo(() => {
+    const pts: THREE.Vector2[] = [];
+    for (let i = 0; i <= 22; i++) {
+      const t = i / 22;
+      const a = t * (Math.PI / 2);
+      // superellipse-ish profile: wide rim easing into a rounded back
+      pts.push(new THREE.Vector2(Math.cos(a * 0.92) * 0.115, 0.078 * Math.pow(Math.sin(a), 1.35)));
+    }
+    return new THREE.LatheGeometry(pts, 40);
+  }, []);
+  const cable = useMemo(
+    () =>
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-0.34, 0.24, 0.02),  // out of the left cup's base
+          new THREE.Vector3(-0.42, 0.1, 0.1),
+          new THREE.Vector3(-0.3, 0.006, 0.3),   // slack loop on the desk
+          new THREE.Vector3(-0.05, 0.004, 0.38),
+          new THREE.Vector3(0.22, 0.004, 0.3),   // trailing toward the desk mat
+        ]),
+        40,
+        0.008,
+        8,
+        false,
+      ),
+    [],
+  );
   return (
     <group {...props}>
-      {/* stand: base + curved post + cradle */}
-      <mesh position={[0, 0.015, 0]} castShadow>
-        <cylinderGeometry args={[0.14, 0.16, 0.03, 24]} />
-        <meshStandardMaterial color="#17181c" roughness={0.4} metalness={0.3} />
+      {/* stand: chamfered base, slim post, saddle cradle */}
+      <mesh position={[0, 0.02, 0]} material={mats.matte} castShadow>
+        <cylinderGeometry args={[0.13, 0.155, 0.04, 36]} />
       </mesh>
-      <mesh position={[0, 0.32, 0]} castShadow>
-        <cylinderGeometry args={[0.022, 0.026, 0.62, 12]} />
-        <meshStandardMaterial color="#2a2d33" roughness={0.35} metalness={0.7} />
+      <mesh position={[0, 0.34, 0]} material={mats.metal} castShadow>
+        <cylinderGeometry args={[0.018, 0.024, 0.6, 20]} />
       </mesh>
-      <mesh position={[0, 0.64, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
-        <capsuleGeometry args={[0.035, 0.12, 4, 12]} />
-        <meshStandardMaterial color="#2a2d33" roughness={0.35} metalness={0.7} />
+      <mesh position={[0, 0.63, 0]} rotation={[0, 0, Math.PI / 2]} material={mats.matte} castShadow>
+        <capsuleGeometry args={[0.032, 0.14, 8, 20]} />
       </mesh>
-      {/* the cans hanging off the cradle */}
-      <group position={[0, 0.52, 0]}>
-        <mesh castShadow>
-          <torusGeometry args={[0.19, 0.028, 10, 28, Math.PI]} />
-          <meshStandardMaterial color="#1c1e24" roughness={0.5} metalness={0.2} />
-        </mesh>
-        {[-0.19, 0.19].map((dx, i) => (
-          <group key={i} position={[dx, -0.1, 0]}>
-            <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
-              <cylinderGeometry args={[0.11, 0.11, 0.06, 20]} />
-              <meshStandardMaterial color="#14161a" roughness={0.45} metalness={0.25} />
+
+      {/* the headset hanging on the cradle */}
+      <group position={[0, 0.315, 0]}>
+        {/* headband: flattened arc + inner cushion strip */}
+        <group scale={[1, 1, 0.62]}>
+          <mesh material={mats.shell} castShadow>
+            <torusGeometry args={[0.34, 0.03, 18, 56, Math.PI]} />
+          </mesh>
+          <mesh material={mats.cushion} rotation={[0, 0, Math.PI * 0.2]}>
+            <torusGeometry args={[0.315, 0.018, 12, 40, Math.PI * 0.6]} />
+          </mesh>
+        </group>
+        {/* yokes + cups at the band's ends */}
+        {[-1, 1].map((side) => (
+          <group key={side} position={[side * 0.34, -0.04, 0]}>
+            {/* brushed slider + fork */}
+            <mesh position={[0, 0.06, 0]} material={mats.metal} castShadow>
+              <cylinderGeometry args={[0.008, 0.008, 0.1, 12]} />
             </mesh>
-            <mesh rotation={[0, 0, Math.PI / 2]} position={[i ? 0.032 : -0.032, 0, 0]}>
-              <torusGeometry args={[0.085, 0.022, 8, 20]} />
-              <meshStandardMaterial color="#0d0e11" roughness={0.85} metalness={0} />
+            <mesh position={[0, -0.005, 0]} rotation={[Math.PI / 2, 0, 0]} material={mats.metal}>
+              <torusGeometry args={[0.03, 0.006, 8, 20, Math.PI]} />
             </mesh>
+            {/* cup shell (dome faces outward) + cushion ring + driver plate */}
+            <group position={[0, -0.09, 0]} rotation={[0, 0, side * -(Math.PI / 2) - side * 0.09]}>
+              <mesh geometry={cupGeo} material={mats.shell} castShadow />
+              <mesh position={[0, -0.012, 0]} material={mats.cushion} rotation={[Math.PI / 2, 0, 0]} scale={[1, 1, 0.55]} castShadow>
+                <torusGeometry args={[0.085, 0.032, 14, 32]} />
+              </mesh>
+              {/* driver plate closing the cup's opening (normal along -y =
+                 out of the rim; rotX π only flipped it to -z and left a
+                 see-through ring) */}
+              <mesh position={[0, -0.022, 0]} rotation={[Math.PI / 2, 0, 0]} material={mats.matte}>
+                <circleGeometry args={[0.078, 28]} />
+              </mesh>
+            </group>
           </group>
         ))}
       </group>
+
+      {/* its cable, dropped onto the desk */}
+      <mesh geometry={cable} material={mats.matte} />
     </group>
   );
 }

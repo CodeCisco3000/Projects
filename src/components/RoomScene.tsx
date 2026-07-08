@@ -1809,7 +1809,9 @@ export default function RoomScene({
       </Suspense>
       <CrownMolding />
       <WallDecor />
-      <Bookshelf />
+      <Suspense fallback={null}>
+        <Bookshelf />
+      </Suspense>
       <BedsideDecor />
       <DeskClutter />
       <FloorLife />

@@ -88,6 +88,7 @@ export default function MusicPlayer() {
       onFocusCapture={cancelCollapse}
       onBlurCapture={() => armCollapse(COLLAPSE_AFTER_LEAVE_MS)}
     >
+      <div className="mp-card">
       {/* the deck: plinth + platter + vinyl (rotating, Phantom Thieves label) under a
           fixed specular sheen, with a tonearm that lifts off the record on pause */}
       <button
@@ -154,6 +155,23 @@ export default function MusicPlayer() {
           </div>
         </div>
       </div>
+      </div>
+
+      {/* the tucked state: a tiny chip of bouncing EQ bars (they freeze on
+         pause, same as the big equalizer); hovering it expands the card */}
+      <button
+        className="mp-chip"
+        onClick={() => setPlaying((p) => !p)}
+        aria-label={playing ? `Pause ${TRACK.title}` : `Play ${TRACK.title}`}
+        title={`${TRACK.title} — ${TRACK.artist}`}
+        tabIndex={mini ? 0 : -1}
+      >
+        <span className="mp-eq" aria-hidden="true">
+          {Array.from({ length: 5 }, (_, i) => (
+            <i key={i} />
+          ))}
+        </span>
+      </button>
 
       {AUDIO_SRC && <audio src={AUDIO_SRC} />}
     </aside>

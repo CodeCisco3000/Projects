@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:goodnight": "cd ../Portfolio-goodnight && npm run dev -- -p 3001",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

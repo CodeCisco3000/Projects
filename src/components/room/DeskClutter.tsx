@@ -12,8 +12,10 @@
    textbook stack stayed behind. memo(): static.
    ===================================================================== */
 
-import { memo, useMemo } from "react";
+import { memo, Suspense, useMemo } from "react";
 import * as THREE from "three";
+import { useGLTF } from "@react-three/drei";
+import DecorModel from "./DecorModel";
 
 const TOP_Y = -2.13; // desk top surface (measured)
 
@@ -30,44 +32,27 @@ function mulberry32(seed: number) {
   };
 }
 
-/* over-ear headphones on a desk stand — built like the real thing: a
-   flattened headband arc with an under-cushion, brushed-steel yokes, deep
-   lathe-turned cup shells with plush cushion rings, and a cable dropping
-   to the desk. High segment counts + a clearcoat shell material are what
-   separate this from the primitive-toy first pass. */
+/* headphones resting on a desk stand. The stand (chamfered base, slim
+   post, saddle cradle) and the desk cable stay procedural; the headset
+   itself is a downloaded model (CC0, Poly Pizza - see CREDITS.md) after
+   Francisco vetoed the procedural pair's stretched headband arc. The
+   figurine pass in DecorModel smooths the low-poly shading. */
+const HEADPHONES_URL = "/models/decor/headphones.glb";
+
 function Headphones(props: React.ComponentProps<"group">) {
   const mats = useMemo(
     () => ({
-      shell: new THREE.MeshPhysicalMaterial({
-        color: "#1a1c21",
-        roughness: 0.42,
-        metalness: 0,
-        clearcoat: 0.4,
-        clearcoatRoughness: 0.3,
-      }),
-      cushion: new THREE.MeshStandardMaterial({ color: "#0e0f13", roughness: 0.97, metalness: 0 }),
       metal: new THREE.MeshStandardMaterial({ color: "#9a9da4", roughness: 0.28, metalness: 0.95 }),
       matte: new THREE.MeshStandardMaterial({ color: "#212329", roughness: 0.6, metalness: 0.15 }),
     }),
     [],
   );
-  /* cup shell: a smooth turned dome, rim → back, lying on its side */
-  const cupGeo = useMemo(() => {
-    const pts: THREE.Vector2[] = [];
-    for (let i = 0; i <= 22; i++) {
-      const t = i / 22;
-      const a = t * (Math.PI / 2);
-      // superellipse-ish profile: wide rim easing into a rounded back
-      pts.push(new THREE.Vector2(Math.cos(a * 0.92) * 0.115, 0.078 * Math.pow(Math.sin(a), 1.35)));
-    }
-    return new THREE.LatheGeometry(pts, 40);
-  }, []);
   const cable = useMemo(
     () =>
       new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3([
-          new THREE.Vector3(-0.34, 0.24, 0.02),  // out of the left cup's base
-          new THREE.Vector3(-0.42, 0.1, 0.1),
+          new THREE.Vector3(-0.2, 0.3, 0.06),    // out of the left cup's base
+          new THREE.Vector3(-0.38, 0.12, 0.12),
           new THREE.Vector3(-0.3, 0.006, 0.3),   // slack loop on the desk
           new THREE.Vector3(-0.05, 0.004, 0.38),
           new THREE.Vector3(0.22, 0.004, 0.3),   // trailing toward the desk mat
@@ -92,49 +77,24 @@ function Headphones(props: React.ComponentProps<"group">) {
         <capsuleGeometry args={[0.032, 0.14, 8, 20]} />
       </mesh>
 
-      {/* the headset hanging on the cradle */}
-      <group position={[0, 0.315, 0]}>
-        {/* headband: flattened arc + inner cushion strip */}
-        <group scale={[1, 1, 0.62]}>
-          <mesh material={mats.shell} castShadow>
-            <torusGeometry args={[0.34, 0.03, 18, 56, Math.PI]} />
-          </mesh>
-          <mesh material={mats.cushion} rotation={[0, 0, Math.PI * 0.2]}>
-            <torusGeometry args={[0.315, 0.018, 12, 40, Math.PI * 0.6]} />
-          </mesh>
-        </group>
-        {/* yokes + cups at the band's ends */}
-        {[-1, 1].map((side) => (
-          <group key={side} position={[side * 0.34, -0.04, 0]}>
-            {/* brushed slider + fork */}
-            <mesh position={[0, 0.06, 0]} material={mats.metal} castShadow>
-              <cylinderGeometry args={[0.008, 0.008, 0.1, 12]} />
-            </mesh>
-            <mesh position={[0, -0.005, 0]} rotation={[Math.PI / 2, 0, 0]} material={mats.metal}>
-              <torusGeometry args={[0.03, 0.006, 8, 20, Math.PI]} />
-            </mesh>
-            {/* cup shell (dome faces outward) + cushion ring + driver plate */}
-            <group position={[0, -0.09, 0]} rotation={[0, 0, side * -(Math.PI / 2) - side * 0.09]}>
-              <mesh geometry={cupGeo} material={mats.shell} castShadow />
-              <mesh position={[0, -0.012, 0]} material={mats.cushion} rotation={[Math.PI / 2, 0, 0]} scale={[1, 1, 0.55]} castShadow>
-                <torusGeometry args={[0.085, 0.032, 14, 32]} />
-              </mesh>
-              {/* driver plate closing the cup's opening (normal along -y =
-                 out of the rim; rotX π only flipped it to -z and left a
-                 see-through ring) */}
-              <mesh position={[0, -0.022, 0]} rotation={[Math.PI / 2, 0, 0]} material={mats.matte}>
-                <circleGeometry args={[0.078, 28]} />
-              </mesh>
-            </group>
-          </group>
-        ))}
-      </group>
+      {/* the headset hanging on the cradle: band top rests on the saddle
+         (base-center lands at saddle top minus the model's height) */}
+      <Suspense fallback={null}>
+        <DecorModel
+          url={HEADPHONES_URL}
+          targetH={0.5}
+          position={[0, 0.17, 0]}
+          rotY={Math.PI / 2}
+          figurine
+        />
+      </Suspense>
 
       {/* its cable, dropped onto the desk */}
       <mesh geometry={cable} material={mats.matte} />
     </group>
   );
 }
+useGLTF.preload(HEADPHONES_URL);
 
 /* open spiral notebook + a pen tossed on it */
 function Notebook(props: React.ComponentProps<"group">) {

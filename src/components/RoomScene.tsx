@@ -22,6 +22,7 @@ import * as THREE from "three";
 import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
 import Bookshelf from "./room/Bookshelf";
 import DeskClutter from "./room/DeskClutter";
+import BedsideLamp from "./room/BedsideLamp";
 
 /* room half-extents (world units): walls at x=±HX, floor/ceiling at y=∓HY,
    back wall at z=-HZ, opening toward +Z. Enlarged per live review so furniture
@@ -1790,6 +1791,7 @@ export default function RoomScene({
         <Bookshelf />
       </Suspense>
       <DeskClutter />
+      <BedsideLamp />
 
       <Suspense fallback={null}>
         <Furniture />

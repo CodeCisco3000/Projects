@@ -28,7 +28,9 @@ import DecorModel from "./DecorModel";
 /* ---- placement knobs (world units; wall at x=-11, floor at y=-5) ---- */
 /* real-bookcase proportions at the room's ~4 units/m scale (a Billy is
    202×80×28 cm ≈ 8.1×3.2×1.1 units — the first pass was dollhouse-sized) */
-const SHELF_POS: [number, number, number] = [-11 + 0.55, -5, 5.4]; // back at the wall, base on the floor
+const SHELF_POS: [number, number, number] = [-11 + 0.55, -5, 2.0]; // back at the wall, base on the floor
+// z 5.4 → 2.0 (2026-07-10, Francisco): scooched toward the About placard so
+// the bookcase shares the About stop's frame instead of hiding off-screen
 const SHELF_W = 3.2;   // width along the wall (~80 cm)
 const SHELF_H = 6.4;   // total height (~1.6 m)
 const SHELF_D = 1.05;  // depth into the room (~26 cm)

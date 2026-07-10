@@ -428,7 +428,7 @@ body.ready .mp { opacity: 1; transform: none; pointer-events: auto; transition-d
 /* --- auto-tuck: a beat after sliding in (MusicPlayer.tsx drives .mini), the
        card scales away into a tiny chip of bouncing EQ bars in the corner;
        pointer-over or keyboard focus expands the full card again --- */
-.mp.mini { width: 41px; height: 35px; } /* fits the chip exactly (4 bars + padding + border) */
+.mp.mini { width: 73px; height: 35px; } /* fits the chip exactly (11 wave bars + padding + border) */
 .mp.mini .mp-card { opacity: 0; transform: scale(0.28); pointer-events: none; }
 .mp.mini .mp-more { display: none; } /* no half-open drawer mid-collapse */
 .mp-chip {
@@ -451,56 +451,26 @@ body.ready .mp { opacity: 1; transform: none; pointer-events: auto; transition-d
   50% { box-shadow: 0 0 6px 0 rgba(201, 80, 63, 0.2); }
 }
 
-/* --- the chip's four dancing bars, locked to one beat grid ----------------
-   Spotify-style: slim rounded bars scaling from their base through varied
-   keyframe stops (that's what reads organic). Every bar's cycle is exactly
-   TWO beats of the track's tempo — same duration, different choreography —
-   so the peaks stay on the beat forever instead of drifting apart the way
-   the old random 0.66–1.08s clocks did. --mp-beat is the tempo knob. */
+/* --- the chip's waveform: a dome of bars with a rolling crest -------------
+   Eleven slim bars whose MAX heights follow a center-swelling envelope
+   (inline style from MusicPlayer.tsx), all running ONE shared swell
+   keyframe over exactly two beats — each bar starts a fraction of the
+   cycle later than its neighbor (inline negative delay), so a single
+   crest travels across the dome and the whole thing breathes "oo… oo…"
+   on the groove. --mp-beat is the tempo knob. */
 .mp { --mp-beat: 577ms; } /* ≈104 BPM — the Heartbreak groove */
-.mp-chip-eq { display: flex; align-items: flex-end; gap: 3px; height: 14px; }
+.mp-chip-eq { display: flex; align-items: flex-end; gap: 2px; height: 15px; }
 .mp-chip-eq i {
-  width: 3px; height: 100%; border-radius: 2px;
-  transform: scaleY(0.25); transform-origin: bottom;
+  width: 3px; border-radius: 2px; /* height + delay come inline per bar */
+  transform: scaleY(0.22); transform-origin: bottom;
   background: linear-gradient(to top, #8e2a20, #c9503f 70%, #e08a6a);
-  animation: calc(var(--mp-beat) * 2) ease-in-out infinite paused;
+  animation: mp-wave calc(var(--mp-beat) * 2) ease-in-out infinite;
 }
-.mp.playing .mp-chip-eq i { animation-play-state: running; }
-/* bar 1 — the bass: big hit on every beat */
-.mp-chip-eq i:nth-child(1) { animation-name: mp-bar-a; }
-@keyframes mp-bar-a {
-  0%, 100% { transform: scaleY(1); }
-  25% { transform: scaleY(0.35); }
-  50% { transform: scaleY(0.85); }
-  75% { transform: scaleY(0.3); }
-}
-/* bar 2 — syncopated: lands just off the beat */
-.mp-chip-eq i:nth-child(2) { animation-name: mp-bar-b; }
-@keyframes mp-bar-b {
-  0%, 100% { transform: scaleY(0.45); }
-  12% { transform: scaleY(0.9); }
-  37% { transform: scaleY(0.5); }
-  50% { transform: scaleY(0.95); }
-  70% { transform: scaleY(0.4); }
-  87% { transform: scaleY(0.7); }
-}
-/* bar 3 — the melody line: slower wander */
-.mp-chip-eq i:nth-child(3) { animation-name: mp-bar-c; }
-@keyframes mp-bar-c {
-  0%, 100% { transform: scaleY(0.7); }
-  20% { transform: scaleY(0.42); }
-  40% { transform: scaleY(1); }
-  60% { transform: scaleY(0.55); }
-  80% { transform: scaleY(0.82); }
-}
-/* bar 4 — the hats: quick flutters between beats */
-.mp-chip-eq i:nth-child(4) { animation-name: mp-bar-d; }
-@keyframes mp-bar-d {
-  0%, 100% { transform: scaleY(0.3); }
-  25% { transform: scaleY(0.78); }
-  50% { transform: scaleY(0.35); }
-  62% { transform: scaleY(0.88); }
-  75% { transform: scaleY(0.5); }
+/* dead waveform on pause: the envelope silhouette at stub height */
+.mp:not(.playing) .mp-chip-eq i { animation: none; }
+@keyframes mp-wave {
+  0%, 100% { transform: scaleY(0.22); }
+  50% { transform: scaleY(1); }
 }
 
 /* --- the deck: a brushed plinth carrying the platter + vinyl; grooves and the
@@ -630,7 +600,7 @@ body.ready .mp { opacity: 1; transform: none; pointer-events: auto; transition-d
 @media (max-width: 900px) {
   .mp { width: 162px; top: 72px; left: 18px; }
   .mp-card { width: 162px; column-gap: 8px; }
-  .mp.mini { width: 41px; }
+  .mp.mini { width: 73px; }
   .mp-deck { width: 48px; height: 48px; }
   .mp-title { font-size: 12px; }
 }

@@ -29,9 +29,14 @@ const AUDIO_SRC = ""; // intentionally empty — see the header note
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 /* how long the full card stays up after sliding in, and after the pointer
-   leaves it, before tucking into the mini disc */
+   leaves it, before tucking into the mini waveform chip */
 const COLLAPSE_AFTER_INTRO_MS = 3200; // ≈1.35s slide-in + ~1.8s on show
 const COLLAPSE_AFTER_LEAVE_MS = 1400;
+
+/* the chip waveform's dome envelope: each bar's MAX height (%), swelling
+   through the middle and easing off at the ends — the crest that rolls
+   across them is globals.css's mp-wave keyframe */
+const WAVE_ENVELOPE = [38, 55, 72, 86, 96, 100, 96, 86, 72, 55, 38];
 
 export default function MusicPlayer() {
   const [playing, setPlaying] = useState(true);
@@ -157,12 +162,13 @@ export default function MusicPlayer() {
       </div>
       </div>
 
-      {/* the tucked state: a Spotify-style now-playing glyph — four slim
-         rounded bars dancing on a shared beat grid (all keyframes run at
-         exactly two beats of the track's tempo, so peaks land ON the beat
-         instead of drifting like the old random-clock bars). They drop to
-         low stubs on pause. If AUDIO_SRC ever ships a real file, replace
-         the beat grid with a Web Audio AnalyserNode driving bar heights. */}
+      {/* the tucked state: a little WAVEFORM — eleven slim bars under a
+         dome envelope (tall in the middle, short at the ends) with one
+         shared crest rolling across them each two-beat cycle, so it swells
+         "oo… oo…" on the groove instead of bouncing randomly. Per-bar
+         height = the envelope; per-bar negative delay = the travel. On
+         pause the wave drops dead to its envelope stubs. If AUDIO_SRC ever
+         ships a real file, replace this with an AnalyserNode's bins. */}
       <button
         className="mp-chip"
         onClick={() => setPlaying((p) => !p)}
@@ -171,8 +177,14 @@ export default function MusicPlayer() {
         tabIndex={mini ? 0 : -1}
       >
         <span className="mp-chip-eq" aria-hidden="true">
-          {Array.from({ length: 4 }, (_, i) => (
-            <i key={i} />
+          {WAVE_ENVELOPE.map((h, i) => (
+            <i
+              key={i}
+              style={{
+                height: `${h}%`,
+                animationDelay: `calc(${-i} * var(--mp-beat) * 2 / ${WAVE_ENVELOPE.length})`,
+              }}
+            />
           ))}
         </span>
       </button>

@@ -129,3 +129,4 @@ export default function DecorModel({
 
 useGLTF.preload("/models/decor/trex.glb");
 useGLTF.preload("/models/decor/diplodocus.glb");
+useGLTF.preload("/models/decor/soccer-ball.glb");

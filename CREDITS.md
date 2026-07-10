@@ -41,6 +41,10 @@ Third-party assets used in this site, with attribution as required by their lice
   ["Diplodocus"](https://poly.pizza/m/12n6ICAVpYB) by Poly by Google,
   licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
 
+- **Simple soccer football** — `public/models/decor/soccer-ball.glb`
+  ["Simple soccer football"](https://poly.pizza/m/57u6P7Sr7K0) by Smirnoff Alexander,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
 - **Headphones (CC0)** — `public/models/decor/headphones.glb`
   ["Headphones"](https://poly.pizza/m/PSsWSIAYIL) by CreativeTrio,
   Public Domain (CC0), via [Poly Pizza](https://poly.pizza). (Hung on the site's procedural desk stand.)

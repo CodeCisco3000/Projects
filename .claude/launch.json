@@ -7,13 +7,6 @@
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
       "autoPort": true
-    },
-    {
-      "name": "portfolio-goodnight",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:goodnight"],
-      "port": 3001,
-      "autoPort": true
     }
   ]
 }

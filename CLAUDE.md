@@ -19,7 +19,7 @@ tuning in a real browser (the headless preview can't hold a WebGL context — se
 ## Pointers
 - Plan: [docs/00_plan.md](docs/00_plan.md)
 - Decision log: [docs/decisions/](docs/decisions/)
-- Current turnover: [docs/artifacts/handoffs/2026-07-06_223000_phase-3_lived-in-personality-pass.md](docs/artifacts/handoffs/2026-07-06_223000_phase-3_lived-in-personality-pass.md)
+- Current turnover: [docs/artifacts/handoffs/2026-06-25_195918_phase-3_gaming-setup-and-peripherals.md](docs/artifacts/handoffs/2026-06-25_195918_phase-3_gaming-setup-and-peripherals.md)
 
 ## Phase index
 | # | Name | Status | Closeout date | Phase file |
@@ -37,12 +37,5 @@ tuning in a real browser (the headless preview can't hold a WebGL context — se
 - All paths use forward slashes.
 - Free-tier services only (Vercel hobby); CC0 assets only — no paid SaaS without an ADR.
 - Don't commit/push/deploy until Francisco says so.
-- **Goodnight sandbox (added 2026-07-09, Francisco's ask):** overnight autonomous sessions ("run
-  goodnight have fun") must NOT touch this tree. They work in the `../Portfolio-goodnight` worktree
-  on the `goodnight` branch (first step: `git -C ../Portfolio-goodnight merge <current branch>` or
-  reset it to the session's start point), previewed via the `portfolio-goodnight` launch config →
-  localhost:3001. The regular room stays on localhost:3000 unchanged. In the morning Francisco
-  compares both hosts and says which goodnight changes merge into the working branch — nothing
-  merges without his pick.
 - Turbopack cache goes stale on CSS/font edits — stop server, `rm -rf .next`, restart.
 - `Private Random Stuff/` is git-ignored (résumés, references, raw textures) — never commit it.

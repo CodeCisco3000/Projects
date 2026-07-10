@@ -44,5 +44,9 @@ tuning in a real browser (the headless preview can't hold a WebGL context — se
   localhost:3001. The regular room stays on localhost:3000 unchanged. In the morning Francisco
   compares both hosts and says which goodnight changes merge into the working branch — nothing
   merges without his pick.
+- **Direct requests land on the MAIN tree (added 2026-07-09, Francisco's ask):** anything Francisco
+  asks for in a regular session is built on this tree / localhost:3000 — never on the goodnight
+  branch. Goodnight-branch content only moves here when Francisco names it (he drives the
+  migration, piece by piece).
 - Turbopack cache goes stale on CSS/font edits — stop server, `rm -rf .next`, restart.
 - `Private Random Stuff/` is git-ignored (résumés, references, raw textures) — never commit it.

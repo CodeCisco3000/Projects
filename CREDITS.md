@@ -33,6 +33,18 @@ Third-party assets used in this site, with attribution as required by their lice
   licensed under [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/), via [Sketchfab](https://sketchfab.com).
   (`chair-opt.glb`: 67 fragment meshes joined into one .glb with gltf-transform for draw-call performance; geometry unchanged.)
 
+- **T-Rex (shelf figurine)** — `public/models/decor/trex.glb`
+  ["T-Rex"](https://poly.pizza/m/9GyZw9gGPMq) by Poly by Google,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
+- **Diplodocus (shelf figurine)** — `public/models/decor/diplodocus.glb`
+  ["Diplodocus"](https://poly.pizza/m/12n6ICAVpYB) by Poly by Google,
+  licensed under [CC-BY-3.0](https://creativecommons.org/licenses/by/3.0/), via [Poly Pizza](https://poly.pizza).
+
+- **Book Encyclopedia Set 01 (CC0)** — `public/models/polyhaven/book_encyclopedia_set_01/`
+  ["Book Encyclopedia Set 01"](https://polyhaven.com/a/book_encyclopedia_set_01) by John Malcolm,
+  [Poly Haven](https://polyhaven.com), CC0. (2K glTF export; 20 volumes used across the bookcase bays.)
+
 ## Textures (CC0 — no attribution required, listed for provenance)
 
 - **Walls — painted plaster** (`public/textures/wall-*`): "PaintedPlaster017", [ambientCG](https://ambientcg.com), CC0.

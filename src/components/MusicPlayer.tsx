@@ -157,8 +157,12 @@ export default function MusicPlayer() {
       </div>
       </div>
 
-      {/* the tucked state: a tiny chip of bouncing EQ bars (they freeze on
-         pause, same as the big equalizer); hovering it expands the card */}
+      {/* the tucked state: a Spotify-style now-playing glyph — four slim
+         rounded bars dancing on a shared beat grid (all keyframes run at
+         exactly two beats of the track's tempo, so peaks land ON the beat
+         instead of drifting like the old random-clock bars). They drop to
+         low stubs on pause. If AUDIO_SRC ever ships a real file, replace
+         the beat grid with a Web Audio AnalyserNode driving bar heights. */}
       <button
         className="mp-chip"
         onClick={() => setPlaying((p) => !p)}
@@ -166,8 +170,8 @@ export default function MusicPlayer() {
         title={`${TRACK.title} — ${TRACK.artist}`}
         tabIndex={mini ? 0 : -1}
       >
-        <span className="mp-eq" aria-hidden="true">
-          {Array.from({ length: 5 }, (_, i) => (
+        <span className="mp-chip-eq" aria-hidden="true">
+          {Array.from({ length: 4 }, (_, i) => (
             <i key={i} />
           ))}
         </span>

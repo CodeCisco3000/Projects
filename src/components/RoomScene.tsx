@@ -20,6 +20,10 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import { useGLTF, useTexture, useProgress, Stats, Environment, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
 import { STOPS, lerp, type Stop, type Wall } from "./roomStops";
+import Bookshelf from "./room/Bookshelf";
+import DeskClutter from "./room/DeskClutter";
+import BedsideLamp from "./room/BedsideLamp";
+import DecorModel from "./room/DecorModel";
 
 /* room half-extents (world units): walls at x=±HX, floor/ceiling at y=∓HY,
    back wall at z=-HZ, opening toward +Z. Enlarged per live review so furniture
@@ -1782,9 +1786,19 @@ export default function RoomScene({
         <Walls />
       </Suspense>
       <CrownMolding />
+      {/* first goodnight migration Francisco picked (2026-07-10): the bookcase
+         (books, brick builds, vinyl, record player) + the two desk pieces */}
+      <Suspense fallback={null}>
+        <Bookshelf />
+      </Suspense>
+      <DeskClutter />
+      <BedsideLamp />
 
       <Suspense fallback={null}>
         <Furniture />
+        {/* the soccer ball resting by the bed's foot where it would actually
+           get kicked off shoes (goodnight pick, 2026-07-10) */}
+        <DecorModel url="/models/decor/soccer-ball.glb" targetH={0.85} position={[-3.95, -HY, 0.4]} rotY={1.1} />
         {/* one-frame contact-shadow bake at floor level: soft ambient-occlusion-style
            grounding under the furniture where the two key lights don't reach. Mounted
            in the SAME Suspense as Furniture so the single bake frame runs only after

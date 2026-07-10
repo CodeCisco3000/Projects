@@ -44,7 +44,9 @@ export type Stop = {
    All eyeball first-pass for the new size — tune against the live browser. */
 export const STOPS: Stop[] = [
   // left wall — camera sits front-right and looks across the room at it
-  { id: "about",       wall: "left",  pos: [ 3.0, 2.2, 11.5], look: [-10.6, 0.1, -1.5], close: [-5.0, 0.3, -1.5] },
+  // (about slid z -1.5 → -2.6 on 2026-07-10 with the bookcase's scooch, so the
+  //  placard + bookcase compose together in this stop's frame)
+  { id: "about",       wall: "left",  pos: [ 3.0, 2.2, 11.5], look: [-10.6, 0.1, -2.6], close: [-5.0, 0.3, -2.6] },
   // back wall, swept left → right; camera slides toward center
   { id: "education",   wall: "back",  pos: [ 1.6, 2.2, 11.8], look: [-5.4, 0.2, -8.8], close: [-5.4, 0.5, -3.8] },
   { id: "experience",  wall: "back",  pos: [-0.8, 2.2, 11.9], look: [ 2.4, 0.2, -8.8], close: [ 2.4, 0.5, -3.8] },

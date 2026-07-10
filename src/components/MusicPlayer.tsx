@@ -16,7 +16,7 @@
    Drop a file into AUDIO_SRC later and the same state wires up for real.
    ===================================================================== */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 
 const TRACK = {
@@ -28,9 +28,33 @@ const AUDIO_SRC = ""; // intentionally empty — see the header note
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
+/* how long the full card stays up after sliding in, and after the pointer
+   leaves it, before tucking into the mini waveform chip */
+const COLLAPSE_AFTER_INTRO_MS = 3200; // ≈1.35s slide-in + ~1.8s on show
+const COLLAPSE_AFTER_LEAVE_MS = 1400;
+
+/* the chip waveform's dome envelope: each bar's MAX height (%), swelling
+   through the middle and easing off at the ends — the crest that rolls
+   across them is globals.css's mp-wave keyframe. 15 bars × 2px = a longer,
+   thinner ribbon (the 11 × 3px version read chunky on mobile). */
+const WAVE_ENVELOPE = [30, 42, 55, 68, 80, 90, 97, 100, 97, 90, 80, 68, 55, 42, 30];
+
 export default function MusicPlayer() {
   const [playing, setPlaying] = useState(true);
   const [t, setT] = useState(84); // start mid-song like a room you walked into
+  // mini = tucked into just the spinning disc; hover/focus expands it again
+  const [mini, setMini] = useState(false);
+  const hideTimer = useRef<number | null>(null);
+
+  const armCollapse = (ms: number) => {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setMini(true), ms);
+  };
+  const cancelCollapse = () => {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = null;
+    setMini(false);
+  };
 
   // simulated playback clock (becomes the real audio clock if AUDIO_SRC is set)
   useEffect(() => {
@@ -39,8 +63,38 @@ export default function MusicPlayer() {
     return () => clearInterval(id);
   }, [playing]);
 
+  // the card slides in when the loading curtain lifts (body gains .ready);
+  // a beat later it tucks itself into the mini disc
+  useEffect(() => {
+    let mo: MutationObserver | null = null;
+    if (document.body.classList.contains("ready")) {
+      armCollapse(COLLAPSE_AFTER_INTRO_MS);
+    } else {
+      mo = new MutationObserver(() => {
+        if (document.body.classList.contains("ready")) {
+          armCollapse(COLLAPSE_AFTER_INTRO_MS);
+          mo?.disconnect();
+          mo = null;
+        }
+      });
+      mo.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    }
+    return () => {
+      mo?.disconnect();
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, []);
+
   return (
-    <aside className={"mp" + (playing ? " playing" : "")} aria-label="Now playing">
+    <aside
+      className={"mp" + (playing ? " playing" : "") + (mini ? " mini" : "")}
+      aria-label="Now playing"
+      onPointerEnter={cancelCollapse}
+      onPointerLeave={() => armCollapse(COLLAPSE_AFTER_LEAVE_MS)}
+      onFocusCapture={cancelCollapse}
+      onBlurCapture={() => armCollapse(COLLAPSE_AFTER_LEAVE_MS)}
+    >
+      <div className="mp-card">
       {/* the deck: plinth + platter + vinyl (rotating, Phantom Thieves label) under a
           fixed specular sheen, with a tonearm that lifts off the record on pause */}
       <button
@@ -107,6 +161,34 @@ export default function MusicPlayer() {
           </div>
         </div>
       </div>
+      </div>
+
+      {/* the tucked state: a little WAVEFORM — eleven slim bars under a
+         dome envelope (tall in the middle, short at the ends) with one
+         shared crest rolling across them each two-beat cycle, so it swells
+         "oo… oo…" on the groove instead of bouncing randomly. Per-bar
+         height = the envelope; per-bar negative delay = the travel. On
+         pause the wave drops dead to its envelope stubs. If AUDIO_SRC ever
+         ships a real file, replace this with an AnalyserNode's bins. */}
+      <button
+        className="mp-chip"
+        onClick={() => setPlaying((p) => !p)}
+        aria-label={playing ? `Pause ${TRACK.title}` : `Play ${TRACK.title}`}
+        title={`${TRACK.title} — ${TRACK.artist}`}
+        tabIndex={mini ? 0 : -1}
+      >
+        <span className="mp-chip-eq" aria-hidden="true">
+          {WAVE_ENVELOPE.map((h, i) => (
+            <i
+              key={i}
+              style={{
+                height: `${h}%`,
+                animationDelay: `calc(${-i} * var(--mp-beat) * 2 / ${WAVE_ENVELOPE.length})`,
+              }}
+            />
+          ))}
+        </span>
+      </button>
 
       {AUDIO_SRC && <audio src={AUDIO_SRC} />}
     </aside>
